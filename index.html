@@ -1,0 +1,151 @@
+<!DOCTYPE html>
+<html lang="fr">
+
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>R Data Mining - Projets</title>
+    <style type="text/css">
+        body {
+            font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif;
+            font-size: 16px;
+            line-height: 1.6;
+            color: #333;
+            background-color: #fff;
+            margin: 0;
+            padding: 0;
+        }
+
+        .main-container {
+            max-width: 1000px;
+            margin: 40px auto;
+            padding: 20px;
+        }
+
+        h1,
+        h2,
+        h3 {
+            color: #2c3e50;
+            font-weight: 600;
+        }
+
+        .header-title {
+            text-align: center;
+            font-size: 2.5em;
+            font-weight: bold;
+            color: #2c3e50;
+            margin-bottom: 10px;
+            border-bottom: 3px solid #18bc9c;
+            padding-bottom: 10px;
+        }
+
+        .header-subtitle {
+            text-align: center;
+            font-size: 1.5em;
+            color: #7f8c8d;
+            margin-bottom: 40px;
+        }
+
+        .project-card {
+            background: #f9f9f9;
+            border-left: 5px solid #18bc9c;
+            margin: 2em 0;
+            padding: 20px 30px;
+            border-radius: 4px;
+            box-shadow: 0 2px 5px rgba(0, 0, 0, 0.05);
+            transition: transform 0.2s ease;
+        }
+
+        .project-card:hover {
+            transform: translateX(5px);
+            background: #f1f1f1;
+        }
+
+        .project-card h2 {
+            margin-top: 0;
+            color: #18bc9c;
+            font-size: 1.6em;
+        }
+
+        .project-card p {
+            color: #34495e;
+            margin-bottom: 15px;
+        }
+
+        .project-link {
+            display: inline-block;
+            background-color: #18bc9c;
+            color: white;
+            padding: 10px 20px;
+            text-decoration: none;
+            border-radius: 4px;
+            font-weight: bold;
+            transition: background-color 0.2s;
+        }
+
+        .project-link:hover {
+            background-color: #128f76;
+            color: white;
+        }
+
+        footer {
+            text-align: center;
+            margin-top: 60px;
+            padding: 20px;
+            font-size: 0.9em;
+            color: #7f8c8d;
+            border-top: 1px solid #eee;
+        }
+    </style>
+</head>
+
+<body>
+    <div
+        style="background-color: #f0f4f8; border-bottom: 1px solid #d1d5db; padding: 10px; text-align: center; font-family: system-ui, -apple-system, sans-serif; font-size: 14px; color: #4b5563;">
+        ✨ Développement et mise en page en <strong>pair programming with AI</strong>
+    </div>
+    <div class="main-container">
+        <h1 class="header-title">📊 R Data Mining</h1>
+        <p class="header-subtitle">ESIEE Paris | Fouille de données avec R</p>
+
+        <article class="project-card">
+            <h2>Projet 1 : Bayesian Classification</h2>
+            <p>
+                Classification Bayésienne pour la détection d'émotions dans des textes courts.
+                Ce projet explore les principes du classifieur de Bayes appliqués à l'analyse textuelle.
+            </p>
+            <a href="projects/01-bayes-class/index.html" class="project-link">
+                Accéder au rapport
+            </a>
+        </article>
+
+        <article class="project-card">
+            <h2>Projet 2 : Twitter Sentiment Analysis</h2>
+            <p>
+                Analyse factorielle discriminante (AFD) appliquée à l'analyse de sentiments sur Twitter.
+                Ce projet explore la réduction de dimensionnalité et la visualisation de structures de sentiments
+                à l'aide de données Kaggle et de corrections via le modèle de langage Gemini.
+            </p>
+            <a href="projects/02-afd-twitter/index.html" class="project-link">
+                Accéder au rapport
+            </a>
+        </article>
+
+        <article class="project-card">
+            <h2>Projet 3 : Analyse des Thèses de Doctorat</h2>
+            <p>
+                Classification Bayésienne et Analyse Factorielle Discriminante appliquées aux résumés de thèses.
+                Comparaison des approches Sparse (TF-IDF) et Word Embeddings pour la catégorisation par domaine.
+            </p>
+            <a href="projects/03-afd-bay-theses/index.html" class="project-link">
+                Accéder au rapport
+            </a>
+        </article>
+
+        <footer>
+            <p>Marie Bouetel & Wilfried LAFAYE<br>2025 - 2026</p>
+        </footer>
+    </div>
+</body>
+
+</html>
