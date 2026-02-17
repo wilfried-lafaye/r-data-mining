@@ -1,0 +1,914 @@
+---
+title: "Classification Bayésienne et Analyse Factorielle Discriminante"
+subtitle: "Projet 3 : Analyse des Thèses de Doctorat Françaises"
+author: 
+  - Marie Bouetel
+  - Wilfried LAFAYE
+date: "ESIEE Paris | 2025 - 2026"
+output:
+  html_document:
+    theme: flatly
+    highlight: tango
+    code_folding: hide
+    toc: true
+    toc_depth: 2
+    toc_float:
+      collapsed: false
+      smooth_scroll: true
+    number_sections: true
+    df_print: paged
+---
+
+<style type="text/css">
+
+body {
+    font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif;
+    font-size: 16px;
+    line-height: 1.6;
+    color: #333;
+    text-align: justify;
+}
+
+h1, h2, h3 {
+    color: #2c3e50;
+    font-weight: 600;
+}
+
+h1 {
+    margin-top: 40px;
+    border-bottom: 3px solid #18bc9c;
+    padding-bottom: 10px;
+}
+
+h2 {
+    margin-top: 30px;
+    border-left: 5px solid #18bc9c;
+    padding-left: 10px;
+}
+
+.title {
+    text-align: center;
+    font-size: 2.5em;
+    font-weight: bold;
+    color: #2c3e50;
+    margin-bottom: 10px;
+}
+
+.subtitle {
+    text-align: center;
+    font-size: 1.5em;
+    color: #7f8c8d;
+    margin-bottom: 30px;
+}
+
+.author, .date {
+    text-align: center;
+    font-size: 1.2em;
+    color: #34495e;
+}
+
+.main-container {
+    max-width: 1000px;
+    margin-left: auto;
+    margin-right: auto;
+}
+
+blockquote {
+    background: #f9f9f9;
+    border-left: 5px solid #18bc9c;
+    margin: 1.5em 10px;
+    padding: 0.5em 10px;
+    font-style: italic;
+}
+</style>
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE, message = FALSE, warning = FALSE, fig.align = "center")
+```
+
+# Introduction
+
+```{r load-libs, message=FALSE, warning=FALSE}
+library(tidyverse)
+library(tm)
+library(MASS)
+library(caret)
+library(SnowballC)
+library(topicmodels)
+library(text2vec)
+library(kernlab) # Pour SVM
+library(klaR)    # Pour Naive Bayes optimisé
+
+```
+
+
+Ce projet a pour objectif de mettre en place une **classification bayésienne avancée** combinée à une **analyse factorielle discriminante (AFD/LDA)** pour catégoriser des résumés de thèses de doctorat françaises en fonction de leur domaine d'étude.
+
+Nous comparerons deux approches de vectorisation :
+
+1. **Approche Sparse (TF-IDF)** : Vectorisation classique basée sur la fréquence des termes.
+2. **Approche Word Embeddings** : Représentation dense des mots capturant la sémantique.
+
+## Le Jeu de Données
+
+Nous utilisons le jeu de données **French Doctoral Thesis Semantic Similarity Search** disponible sur Kaggle. Ce dataset contient des informations sur des thèses françaises, notamment leurs résumés (abstracts), titres et domaines d'études.
+
+*   **Source** : [Kaggle - Antoine Bourgois](https://www.kaggle.com/code/antoinebourgois2/french-doctoral-thesis-semantic-similarity-search)
+*   **Défi** : La nature textuelle et sémantique des données rend la classification complexe.
+
+## Objectifs
+
+1.  **Prétraitement NLP** : Nettoyage, vectorisation (TF-IDF/Embeddings).
+2.  **Extraction de caractéristiques** : Topic Modeling, NLP features.
+3.  **Réduction de dimension** : Utilisation de l'Analyse Discriminante Linéaire (LDA) pour projeter les données.
+4.  **Classification** : Entraînement d'un classificateur Bayésien (Naïf ou avancé).
+5.  **Évaluation** : Analyse des performances (Accuracy, F1-score, Matrices de confusion).
+
+---
+
+# Chargement et Préparation des Données
+
+```{r download-data}
+
+data_dir <- "../data"
+dataset_file <- file.path(data_dir, "french_thesis_20231021_metadata.csv")
+zip_file <- file.path(data_dir, "dataset.zip")
+
+
+kaggle_json <- "~/.kaggle/kaggle.json"
+
+if (!file.exists(dataset_file)) {
+  cat(" Vérification des données...\n")
+  
+  if (!dir.exists(data_dir)) dir.create(data_dir, recursive = TRUE)
+  
+
+  if (file.exists(kaggle_json)) {
+
+    json_content <- paste(readLines(kaggle_json, warn = FALSE), collapse = " ")
+    username <- sub('.*"username"\\s*:\\s*"([^"]+)".*', "\\1", json_content)
+    key <- sub('.*"key"\\s*:\\s*"([^"]+)".*', "\\1", json_content)
+    
+    cat(" Identifiants Kaggle détectés (Curl).\n")
+    
+
+    url <- "https://www.kaggle.com/api/v1/datasets/download/antoinebourgois2/french-doctoral-thesis"
+    
+
+    cmd <- sprintf("curl -s -L -u %s:%s -o %s %s", 
+                   username, key, zip_file, url)
+    
+    cat(" Téléchargement en cours via Curl...\n")
+    exit_code <- system(cmd)
+    
+    if (exit_code == 0 && file.exists(zip_file)) {
+      cat(" Téléchargement réussi ! Décompression...\n")
+      unzip(zip_file, exdir = data_dir)
+      file.remove(zip_file)
+    } else {
+      cat(" Échec du téléchargement Curl. Code:", exit_code, "\n")
+    }
+    
+  } else {
+    cat(" Fichier ~/.kaggle/kaggle.json introuvable.\n")
+    cat("Pour le téléchargement automatique, placez votre clé API Kaggle à cet emplacement.\n")
+    cat("Sinon, téléchargez manuellement les fichiers dans le dossier 'data'.\n")
+  }
+} else {
+  cat(" Les données sont déjà présentes.\n")
+}
+
+
+if (file.exists(dataset_file)) {
+
+    df <- read_csv(dataset_file, show_col_types = FALSE)
+    
+
+    cat(" Dimensions initiales du dataset : ", paste(dim(df), collapse = " x "), "\n")
+    
+
+    df <- df %>% 
+      filter(!is.na(Description) & Description != "") %>%
+      distinct(Description, .keep_all = TRUE)
+    
+    cat(" Nombre de thèses avec résumé exploitable : ", nrow(df), "\n")
+    
+
+    set.seed(123)
+    df <- df %>% sample_n(min(10000, nrow(df)))
+}
+```
+
+---
+
+# Prétraitement des Données (Text Mining)
+
+Pour transformer les résumés de thèses en données exploitables par nos modèles, nous appliquerons les étapes suivantes :
+
+*   **Nettoyage** : Suppression de la ponctuation, conversion en minuscules.
+*   **Stopwords** : Élimination des mots vides (le, la, de, etc.) qui n'apportent pas d'information sémantique discriminante.
+*   **Stemming / Lemmatisation** : Réduction des mots à leur racine pour regrouper les termes similaires.
+
+## Implémentation du Nettoyage
+
+```{r cleaning}
+
+clean_corpus <- function(corpus) {
+
+  corpus <- tm_map(corpus, content_transformer(tolower))
+  
+
+  corpus <- tm_map(corpus, removePunctuation)
+  
+
+  corpus <- tm_map(corpus, removeNumbers)
+  
+
+  corpus <- tm_map(corpus, removeWords, stopwords("french"))
+  
+
+  corpus <- tm_map(corpus, stemDocument, language = "french")
+  
+
+  corpus <- tm_map(corpus, stripWhitespace)
+  
+  return(corpus)
+}
+
+
+if (exists("df")) {
+
+  cat(" Création du corpus...\n")
+  docs <- VCorpus(VectorSource(df$Description))
+  
+
+  cat("\n###  Exemple de texte AVANT nettoyage (Document 1) :\n")
+  raw_content <- as.character(docs[[1]])
+  cat(str_wrap(raw_content, width = 80), "\n")
+  
+
+  cat("\n Application du nettoyage...\n")
+  docs <- clean_corpus(docs)
+  
+
+  cat("\n###  Exemple de texte APRÈS nettoyage (Document 1) :\n")
+  cleaned_content <- as.character(docs[[1]])
+  cat(str_wrap(cleaned_content, width = 80), "\n")
+}
+```
+
+---
+
+# Visualisation de la Répartition des Classes
+
+Avant de procéder à la classification, il est essentiel de comprendre la distribution des thèses par domaine. Comme nous travaillons sur un échantillon, nous voulons identifier les thématiques les plus représentées.
+
+```{r class_distribution}
+if (exists("df")) {
+  # Calcul des effectifs par domaine
+  domain_counts <- df %>%
+    count(Domain, sort = TRUE) %>%
+    mutate(Domain = fct_reorder(Domain, n))
+  
+  cat(" Nombre total de domaines uniques :", nrow(domain_counts), "\n")
+  
+  # Affichage des 15 domaines principaux
+  ggplot(head(domain_counts, 15), aes(x = Domain, y = n, fill = n)) +
+    geom_col() +
+    coord_flip() +
+    scale_fill_gradient(low = "#a1d99b", high = "#18bc9c") +
+    theme_minimal() +
+    labs(title = "Top 15 des Domaines de Recherche",
+         subtitle = "Basé sur l'échantillon de données brutes",
+         x = "Domaine d'étude",
+         y = "Nombre de thèses") +
+    theme(legend.position = "none")
+}
+```
+
+> **Note** : En raison de la forte dispersion des données (plusieurs centaines de domaines), nous limiterons nos modèles de classification aux **8 domaines les plus fréquents** afin d'assurer une puissance statistique suffisante pour l'entraînement.
+
+---
+
+# PARTIE 1 : Approche Sparse TF-IDF + AFD
+
+Cette première approche utilise la vectorisation **TF-IDF** (Term Frequency - Inverse Document Frequency) pour représenter les documents sous forme de vecteurs creux (sparse), puis applique l'**Analyse Factorielle Discriminante** pour la classification.
+
+## Vectorisation TF-IDF
+
+```{r tfidf}
+if (exists("docs")) {
+  cat(" Création des matrices Document-Terme...\n")
+  
+
+  dtm_counts <- DocumentTermMatrix(docs)
+  dtm_counts <- removeSparseTerms(dtm_counts, 0.99)
+  
+
+  rowTotals <- apply(dtm_counts , 1, sum)
+  dtm_counts <- dtm_counts[rowTotals> 0, ]
+  
+  cat(" Dimensions DTM (Counts) : ", paste(dim(dtm_counts), collapse = " x "), "\n")
+  
+
+  dtm_tfidf <- weightTfIdf(dtm_counts)
+  cat(" Dimensions DTM (TF-IDF) : ", paste(dim(dtm_tfidf), collapse = " x "), "\n")
+}
+```
+
+## Modélisation des Rubriques (Topic Modeling - LDA)
+
+Nous utilisons l'algorithme **Latent Dirichlet Allocation (LDA)** pour extraire des "thèmes" cachés dans les résumés. Le modèle LDA considère que chaque document est un mélange de sujets (Topics), et chaque sujet est un mélange de mots.
+
+```{r lda_modeling}
+k_topics <- 30
+
+if (exists("dtm_counts")) {
+  cat(" Entraînement du modèle LDA avec k =", k_topics, "topics...\n")
+  
+
+  lda_model <- LDA(dtm_counts, k = k_topics, control = list(seed = 1234))
+  
+
+  cat("\n###  Termes principaux par Topic :\n")
+  terms_lda <- terms(lda_model, 5)
+  print(terms_lda)
+  
+
+
+  lda_features <- posterior(lda_model)$topics
+  colnames(lda_features) <- paste0("Topic_", 1:k_topics)
+  
+  cat("\n Dimensions des features LDA : ", paste(dim(lda_features), collapse = " x "), "\n")
+  head(lda_features)
+}
+```
+
+Ces probabilités (`Topic_1` ... `Topic_k`) représentent la contribution de chaque sujet au document et seront utilisées comme variables explicatives.
+
+*   **Note** : Nous avons appliqué un seuil de **sparsity** pour éviter l'explosion de la mémoire et ne garder que les termes significatifs.
+
+## Alignement des Données
+
+Pour la suite, nous devons nous assurer que nos features correspondent bien aux métadonnées (le dataset `df`), notamment la variable cible `Domain`.
+
+```{r align_data_sparse}
+if (exists("lda_features") && exists("df")) {
+
+  valid_indices <- as.numeric(rownames(lda_features))
+  
+
+  df_clean <- df[valid_indices, ]
+  
+
+  df_model_sparse <- cbind(df_clean, as.data.frame(lda_features))
+  
+
+
+  top_domains <- names(sort(table(df_model_sparse$Domain), decreasing = TRUE))[1:8]
+  
+  df_final_sparse <- df_model_sparse %>% 
+    filter(Domain %in% top_domains) %>%
+    mutate(Domain = as.factor(Domain))
+    
+  cat(" Données filtrées pour les 8 domaines principaux :", nrow(df_final_sparse), "thèses.\n")
+  cat(" Domaines conservés :\n")
+  print(levels(df_final_sparse$Domain))
+}
+```
+
+## Réduction de Dimensionnalité (AFD / LDA)
+
+Nous utilisons maintenant l'**Analyse Discriminante Linéaire** (Linear Discriminant Analysis - LDA, du package `MASS`) pour projeter nos features (les probabilités des topics) dans un espace qui maximise la séparation entre les domaines.
+
+```{r lda_reduction_sparse}
+if (exists("df_final_sparse")) {
+
+  formula_lda <- as.formula(paste("Domain ~", paste(colnames(lda_features), collapse = " + ")))
+  lda_discrim_sparse <- lda(formula_lda, data = df_final_sparse)
+  
+  cat(" Modèle AFD entraîné.\n")
+  
+
+  lda_values_sparse <- predict(lda_discrim_sparse)$x
+  
+
+  df_plot_sparse <- data.frame(
+    Domain = df_final_sparse$Domain,
+    LD1 = lda_values_sparse[,1],
+    LD2 = lda_values_sparse[,2]
+  )
+  
+
+  library(ggplot2)
+  
+  p_sparse <- ggplot(df_plot_sparse, aes(x = LD1, y = LD2, color = Domain)) +
+    geom_point(alpha = 0.6) +
+    stat_ellipse(level = 0.95) +
+    theme_minimal() +
+    labs(title = "Projection AFD - Approche Sparse TF-IDF",
+         subtitle = "Axes Discriminants LD1 vs LD2",
+         x = "Premier Axe Discriminant (LD1)",
+         y = "Deuxième Axe Discriminant (LD2)") +
+    theme(legend.position = "right")
+    
+  print(p_sparse)
+}
+```
+
+## Classification Bayésienne (Sparse)
+
+### Séparation Train / Test
+
+```{r split_data_sparse}
+if (exists("df_final_sparse")) {
+  set.seed(42)
+
+  trainIndex_sparse <- createDataPartition(df_final_sparse$Domain, p = .8, 
+                                    list = FALSE, 
+                                    times = 1)
+  
+  df_train_sparse <- df_final_sparse[ trainIndex_sparse,]
+  df_test_sparse  <- df_final_sparse[-trainIndex_sparse,]
+  
+  cat(" Données d'entraînement :", nrow(df_train_sparse), "observations\n")
+  cat(" Données de test        :", nrow(df_test_sparse), "observations\n")
+}
+```
+
+### Optimisation et Validation du Modèle (Grid Search)
+
+```{r model-optimization-sparse}
+if (exists("df_train_sparse")) {
+
+
+  fitControl <- trainControl(method = "repeatedcv", 
+                             number = 10, 
+                             repeats = 3)
+  
+
+  searchGrid <- expand.grid(
+    usekernel = c(TRUE, FALSE),
+    laplace = c(0, 0.5, 1), 
+    adjust = c(0.75, 1, 1.25)
+  )
+  
+  cat(" Lancement du Grid Search (Validation Croisée 10-fold x 3)...\n")
+  
+  features_cols_sparse <- grep("Topic_", names(df_train_sparse), value = TRUE)
+  
+
+  nb_tuned_sparse <- train(x = df_train_sparse[, features_cols_sparse],
+                    y = df_train_sparse$Domain,
+                    method = "naive_bayes",
+                    trControl = fitControl,
+                    tuneGrid = searchGrid)
+  
+
+  print(nb_tuned_sparse)
+  
+
+  cat("\n Visualisation de l'impact des hyperparamètres :\n")
+  plot(nb_tuned_sparse)
+  
+
+  cat("\n Meilleure configuration : \n")
+  print(nb_tuned_sparse$bestTune)
+}
+```
+
+### Évaluation Finale (Sparse)
+
+```{r evaluation-sparse}
+if (exists("nb_tuned_sparse")) {
+
+  predictions_sparse <- predict(nb_tuned_sparse, newdata = df_test_sparse[, features_cols_sparse])
+  
+
+  conf_mat_sparse <- confusionMatrix(predictions_sparse, df_test_sparse$Domain)
+  
+  cat(" Accuracy globale (Approche Sparse) :", round(conf_mat_sparse$overall["Accuracy"] * 100, 2), "%\n\n")
+  
+
+  print(conf_mat_sparse$table)
+  
+
+  cat("\n Métriques détaillées par classe :\n")
+  print(conf_mat_sparse$byClass[, c("Sensitivity", "Specificity", "F1")])
+}
+```
+
+### Visualisation des Résultats (Sparse)
+
+```{r vis-sparse}
+if (exists("conf_mat_sparse")) {
+
+  df_cm_sparse <- as.data.frame(conf_mat_sparse$table)
+  colnames(df_cm_sparse) <- c("Prediction", "Reference", "Freq")
+  
+
+  df_cm_sparse <- df_cm_sparse %>%
+    group_by(Reference) %>%
+    mutate(Percentage = Freq / sum(Freq)) %>%
+    ungroup()
+
+  ggplot(df_cm_sparse, aes(x = Reference, y = Prediction, fill = Percentage)) +
+    geom_tile() +
+    scale_fill_gradient(low = "white", high = "#2c3e50") +
+    geom_text(aes(label = Freq), color = ifelse(df_cm_sparse$Percentage > 0.5, "white", "black")) +
+    theme_minimal() +
+    labs(title = "Matrice de Confusion - Approche Sparse TF-IDF",
+         subtitle = "Lignes : Prédictions | Colonnes : Vérité Terrain",
+         x = "Domaine Réel",
+         y = "Domaine Prédit") +
+    theme(axis.text.x = element_text(angle = 45, hjust = 1))
+}
+```
+
+---
+
+# PARTIE 2 : Approche Word Embeddings
+
+Cette seconde approche utilise les **Word Embeddings** (plongements de mots) pour capturer la sémantique des termes. Contrairement à la représentation sparse TF-IDF, les embeddings produisent des vecteurs denses de dimension fixe.
+
+## Préparation des Données pour Word2Vec
+
+```{r prepare_embeddings}
+if (exists("docs") && exists("df")) {
+  
+
+  texts_clean <- sapply(docs, as.character)
+  
+
+  tokens <- itoken(texts_clean, 
+                   preprocessor = tolower, 
+                   tokenizer = word_tokenizer,
+                   progressbar = FALSE)
+  
+
+  vocab <- create_vocabulary(tokens)
+  vocab <- prune_vocabulary(vocab, term_count_min = 5, doc_proportion_max = 0.7)
+  
+  cat(" Taille du vocabulaire :", nrow(vocab), "termes\n")
+  
+  vectorizer <- vocab_vectorizer(vocab)
+}
+```
+
+## Entraînement du Modèle Word2Vec (GloVe)
+
+Nous utilisons l'algorithme **GloVe** (Global Vectors for Word Representation) pour créer nos embeddings de mots.
+
+```{r train_embeddings}
+if (exists("vectorizer")) {
+
+  tcm <- create_tcm(tokens, vectorizer, skip_grams_window = 5L)
+  
+
+  glove <- GlobalVectors$new(rank = 200, x_max = 10)
+  
+  cat(" Entraînement du modèle GloVe...\n")
+  word_vectors <- glove$fit_transform(tcm, n_iter = 20, convergence_tol = 0.01, n_threads = 4)
+  
+
+  word_vectors <- word_vectors + t(glove$components)
+  
+  cat(" Dimensions des embeddings :", paste(dim(word_vectors), collapse = " x "), "\n")
+}
+```
+
+## Création des Vecteurs de Documents
+
+Pour représenter chaque document, nous calculons la moyenne des embeddings de tous les mots du document.
+
+```{r doc_embeddings}
+if (exists("word_vectors") && exists("texts_clean")) {
+
+  # Pour la pondération TF-IDF, nous utilisons le vectorizer créé précédemment
+  tfidf_model <- TfIdf$new()
+  dtm_emb <- create_dtm(tokens, vectorizer)
+  dtm_tfidf_emb <- tfidf_model$fit_transform(dtm_emb)
+
+  # Fonction d'embedding pondérée par TF-IDF
+  get_doc_embedding_weighted <- function(doc_id, dtm_tfidf, word_vectors) {
+    # Récupérer les mots du document et leurs poids TF-IDF
+    doc_weights <- dtm_tfidf[doc_id, ]
+    words_indices <- which(doc_weights > 0)
+    words <- names(words_indices)
+    weights <- as.numeric(doc_weights[words_indices])
+    
+    # Filtrer les mots présents dans Word2Vec
+    valid_mask <- words %in% rownames(word_vectors)
+    if (!any(valid_mask)) return(rep(0, ncol(word_vectors)))
+    
+    valid_words <- words[valid_mask]
+    valid_weights <- weights[valid_mask]
+    
+    # Moyenne pondérée
+    vectors <- word_vectors[valid_words, , drop = FALSE]
+    colSums(vectors * valid_weights) / sum(valid_weights)
+  }
+  
+  cat(" Création des embeddings de documents pondérés par TF-IDF...\n")
+  doc_embeddings <- t(sapply(1:nrow(dtm_tfidf_emb), function(i) {
+    get_doc_embedding_weighted(i, dtm_tfidf_emb, word_vectors)
+  }))
+  rownames(doc_embeddings) <- NULL
+  colnames(doc_embeddings) <- paste0("Emb_", 1:ncol(doc_embeddings))
+  
+  cat(" Dimensions des embeddings de documents :", paste(dim(doc_embeddings), collapse = " x "), "\n")
+}
+```
+
+## Alignement des Données (Embeddings)
+
+```{r align_data_embeddings}
+if (exists("doc_embeddings") && exists("df")) {
+
+  valid_indices_emb <- which(rowSums(doc_embeddings) != 0)
+  
+  df_clean_emb <- df[valid_indices_emb, ]
+  doc_embeddings_valid <- doc_embeddings[valid_indices_emb, ]
+  
+
+  df_model_emb <- cbind(df_clean_emb, as.data.frame(doc_embeddings_valid))
+  
+
+  top_domains_emb <- names(sort(table(df_model_emb$Domain), decreasing = TRUE))[1:8]
+  
+  df_final_emb <- df_model_emb %>% 
+    filter(Domain %in% top_domains_emb) %>%
+    mutate(Domain = as.factor(Domain))
+    
+  cat(" Données filtrées pour les 8 domaines principaux :", nrow(df_final_emb), "thèses.\n")
+}
+```
+
+## Réduction de Dimensionnalité (AFD / LDA) avec Embeddings
+
+```{r lda_reduction_embeddings}
+if (exists("df_final_emb")) {
+
+  features_emb <- grep("Emb_", names(df_final_emb), value = TRUE)
+  
+
+  formula_lda_emb <- as.formula(paste("Domain ~", paste(features_emb, collapse = " + ")))
+  lda_discrim_emb <- lda(formula_lda_emb, data = df_final_emb)
+  
+  cat(" Modèle AFD entraîné sur les embeddings.\n")
+  
+
+  lda_values_emb <- predict(lda_discrim_emb)$x
+  
+
+  df_plot_emb <- data.frame(
+    Domain = df_final_emb$Domain,
+    LD1 = lda_values_emb[,1],
+    LD2 = lda_values_emb[,2]
+  )
+  
+  p_emb <- ggplot(df_plot_emb, aes(x = LD1, y = LD2, color = Domain)) +
+    geom_point(alpha = 0.6) +
+    stat_ellipse(level = 0.95) +
+    theme_minimal() +
+    labs(title = "Projection AFD - Approche Word Embeddings",
+         subtitle = "Axes Discriminants LD1 vs LD2",
+         x = "Premier Axe Discriminant (LD1)",
+         y = "Deuxième Axe Discriminant (LD2)") +
+    theme(legend.position = "right")
+    
+  print(p_emb)
+}
+```
+
+## Classification Bayésienne (Embeddings)
+
+### Séparation Train / Test
+
+```{r split_data_embeddings}
+if (exists("df_final_emb")) {
+  set.seed(42)
+
+  trainIndex_emb <- createDataPartition(df_final_emb$Domain, p = .8, 
+                                    list = FALSE, 
+                                    times = 1)
+  
+  df_train_emb <- df_final_emb[ trainIndex_emb,]
+  df_test_emb  <- df_final_emb[-trainIndex_emb,]
+  
+  cat(" Données d'entraînement :", nrow(df_train_emb), "observations\n")
+  cat(" Données de test        :", nrow(df_test_emb), "observations\n")
+}
+```
+
+### Optimisation et Validation du Modèle
+
+```{r model-optimization-embeddings}
+if (exists("df_train_emb")) {
+
+  # Projection AFD pour la classification (on garde plus de dimensions que pour le plot)
+  lda_values_all_emb <- predict(lda_discrim_emb)$x
+  df_final_emb_lda <- cbind(df_final_emb %>% dplyr::select(-starts_with("Emb_")), as.data.frame(lda_values_all_emb))
+  
+  # Séparation Train/Test sur les composantes AFD
+  set.seed(42)
+  trainIndex_emb <- createDataPartition(df_final_emb_lda$Domain, p = .8, list = FALSE)
+  df_train_emb_lda <- df_final_emb_lda[ trainIndex_emb,]
+  df_test_emb_lda  <- df_final_emb_lda[-trainIndex_emb,]
+  
+  features_lda_emb <- grep("LD", names(df_train_emb_lda), value = TRUE)
+
+  fitControl_emb <- trainControl(method = "cv", number = 5) # Plus rapide pour SVM
+  
+  cat(" Lancement du Grid Search pour Naive Bayes sur AFD...\n")
+  nb_tuned_emb <- train(x = df_train_emb_lda[, features_lda_emb],
+                    y = df_train_emb_lda$Domain,
+                    method = "naive_bayes",
+                    trControl = fitControl_emb)
+                    
+  cat(" Entraînement d'un SVM (Radial) sur les composantes AFD...\n")
+  svm_tuned_emb <- train(x = df_train_emb_lda[, features_lda_emb],
+                        y = df_train_emb_lda$Domain,
+                        method = "svmRadial",
+                        trControl = fitControl_emb,
+                        tuneLength = 5)
+  
+  print(svm_tuned_emb)
+  
+  cat("\n Meilleure configuration SVM : \n")
+  print(svm_tuned_emb$bestTune)
+}
+```
+
+### Évaluation Finale (Embeddings)
+
+```{r evaluation-embeddings}
+if (exists("svm_tuned_emb")) {
+  # On compare Naive Bayes vs SVM sur les tests
+  pred_nb_emb <- predict(nb_tuned_emb, newdata = df_test_emb_lda[, features_lda_emb])
+  pred_svm_emb <- predict(svm_tuned_emb, newdata = df_test_emb_lda[, features_lda_emb])
+  
+  conf_mat_nb_emb <- confusionMatrix(pred_nb_emb, df_test_emb_lda$Domain)
+  conf_mat_emb <- confusionMatrix(pred_svm_emb, df_test_emb_lda$Domain) # On garde SVM pour la suite
+  
+  cat(" Accuracy Naive Bayes (AFD + Embeddings) :", round(conf_mat_nb_emb$overall["Accuracy"] * 100, 2), "%\n")
+  cat(" Accuracy SVM (AFD + Embeddings)         :", round(conf_mat_emb$overall["Accuracy"] * 100, 2), "%\n\n")
+  
+  print(conf_mat_emb$table)
+  
+  cat("\n Métriques SVM détaillées par classe :\n")
+  print(conf_mat_emb$byClass[, c("Sensitivity", "Specificity", "F1")])
+  
+  cat("\n### Analyse de l'Overfitting (Train vs Test)\n")
+
+  # Prédictions sur le jeu d'ENTRAÎNEMENT
+  pred_train_nb <- predict(nb_tuned_emb, newdata = df_train_emb_lda[, features_lda_emb])
+  pred_train_svm <- predict(svm_tuned_emb, newdata = df_train_emb_lda[, features_lda_emb])
+
+  # Matrices de confusion Train
+  cm_train_nb <- confusionMatrix(pred_train_nb, df_train_emb_lda$Domain)
+  cm_train_svm <- confusionMatrix(pred_train_svm, df_train_emb_lda$Domain)
+
+  # Récupération des Accuracy Test
+  acc_test_nb <- conf_mat_nb_emb$overall["Accuracy"]
+  acc_test_svm <- conf_mat_emb$overall["Accuracy"]
+
+  # Accuracy Train
+  acc_train_nb <- cm_train_nb$overall["Accuracy"]
+  acc_train_svm <- cm_train_svm$overall["Accuracy"]
+
+  # Tableau comparatif
+  overfit_df <- data.frame(
+    Nom_Modele = c("Naive Bayes (AFD)", "SVM (AFD)"),
+    Train_Accuracy = c(acc_train_nb, acc_train_svm),
+    Test_Accuracy = c(acc_test_nb, acc_test_svm)
+  )
+
+  overfit_df$Gap <- overfit_df$Train_Accuracy - overfit_df$Test_Accuracy
+
+  # Affichage formaté
+  overfit_df$Train_Accuracy <- scales::percent(overfit_df$Train_Accuracy, accuracy = 0.01)
+  overfit_df$Test_Accuracy <- scales::percent(overfit_df$Test_Accuracy, accuracy = 0.01)
+  overfit_df$Gap <- scales::percent(overfit_df$Gap, accuracy = 0.01)
+
+  print(overfit_df)
+
+  if (any(as.numeric(sub("%", "", overfit_df$Gap)) > 10)) {
+     cat("\n ALERTE : Il y a un risque d'overfitting (écart > 10%).\n")
+  } else {
+     cat("\n Pas d'overfitting majeur détecté (écart < 10%).\n")
+  }
+}
+```
+
+### Visualisation des Résultats (Embeddings)
+
+```{r vis-embeddings}
+if (exists("conf_mat_emb")) {
+
+  df_cm_emb <- as.data.frame(conf_mat_emb$table)
+  colnames(df_cm_emb) <- c("Prediction", "Reference", "Freq")
+  
+  df_cm_emb <- df_cm_emb %>%
+    group_by(Reference) %>%
+    mutate(Percentage = Freq / sum(Freq)) %>%
+    ungroup()
+
+  ggplot(df_cm_emb, aes(x = Reference, y = Prediction, fill = Percentage)) +
+    geom_tile() +
+    scale_fill_gradient(low = "white", high = "#e74c3c") +
+    geom_text(aes(label = Freq), color = ifelse(df_cm_emb$Percentage > 0.5, "white", "black")) +
+    theme_minimal() +
+    labs(title = "Matrice de Confusion - Approche Word Embeddings",
+         subtitle = "Lignes : Prédictions | Colonnes : Vérité Terrain",
+         x = "Domaine Réel",
+         y = "Domaine Prédit") +
+    theme(axis.text.x = element_text(angle = 45, hjust = 1))
+}
+```
+
+---
+
+# Comparaison des Approches
+
+```{r comparison}
+if (exists("conf_mat_sparse") && exists("conf_mat_emb")) {
+  
+  comparison_df <- data.frame(
+    Approche = c("Sparse TF-IDF (NB)", "Word Embeddings (NB)", "Word Embeddings (SVM + AFD)"),
+    Accuracy = c(
+      round(conf_mat_sparse$overall["Accuracy"] * 100, 2),
+      round(conf_mat_nb_emb$overall["Accuracy"] * 100, 2),
+      round(conf_mat_emb$overall["Accuracy"] * 100, 2)
+    ),
+    Kappa = c(
+      round(conf_mat_sparse$overall["Kappa"], 4),
+      round(conf_mat_nb_emb$overall["Kappa"], 4),
+      round(conf_mat_emb$overall["Kappa"], 4)
+    )
+  )
+  
+  cat(" Comparaison des performances :\n")
+  print(comparison_df)
+  
+  f1_sparse <- mean(conf_mat_sparse$byClass[, "F1"], na.rm = TRUE)
+  f1_emb <- mean(conf_mat_emb$byClass[, "F1"], na.rm = TRUE)
+  
+  cat("\n F1-Score moyen (Sparse) :", round(f1_sparse, 4))
+  cat("\n F1-Score moyen (Embeddings SVM) :", round(f1_emb, 4), "\n")
+  
+  comparison_plot <- data.frame(
+    Approche = rep(c("Sparse", "Embed NB", "Embed SVM"), 2),
+    Métrique = c(rep("Accuracy", 3), rep("F1 Moyen", 3)),
+    Score = c(comparison_df$Accuracy[1]/100, comparison_df$Accuracy[2]/100, comparison_df$Accuracy[3]/100, 
+             f1_sparse, mean(conf_mat_nb_emb$byClass[, "F1"], na.rm = TRUE), f1_emb)
+  )
+  
+  ggplot(comparison_plot, aes(x = Approche, y = Score, fill = Métrique)) +
+    geom_col(position = "dodge") +
+    theme_minimal() +
+    labs(title = "Comparaison des Approches de Vectorisation et Modèles",
+         y = "Score",
+         x = "") +
+    scale_y_continuous(labels = scales::percent_format()) +
+    geom_text(aes(label = round(Score, 3)), position = position_dodge(width = 0.9), vjust = -0.5)
+}
+```
+
+---
+
+# Discussion
+
+## Analyse des Approches
+
+### Approche Sparse TF-IDF
+*   **Avantages** : Interprétable, efficace en mémoire pour les données creuses.
+*   **Limites** : Ne capture pas la sémantique des mots (synonymes traités différemment).
+
+### Approche Word Embeddings
+*   **Avantages** : Capture les relations sémantiques entre mots.
+*   **Limites** : Moins interprétable, nécessite plus de données pour un bon entraînement.
+
+## Analyse des Facteurs Discriminants
+
+*   Les domaines avec un F1-score élevé sont ceux qui ont un vocabulaire très spécifique (ex: "Médecine" ou "Chimie").
+*   Les domaines avec un score faible sont probablement ceux qui partagent beaucoup de vocabulaire transversal (ex: "Sciences Sociales" vs "Sciences Humaines").
+
+## Limites
+
+*   Gestion du déséquilibre des classes (si certaines disciplines sont sur-représentées).
+*   La qualité des embeddings dépend de la taille du corpus d'entraînement.
+
+---
+
+# Conclusion
+
+Résumé des principaux résultats obtenus :
+
+*   **L'approche Sparse TF-IDF** avec Topic Modeling offre une bonne interprétabilité des résultats.
+*   **L'approche Word Embeddings** semble être un meilleur choix pour entraîner un modèle que l'AFD + TF-IDF, permettant de capturer des relations sémantiques plus subtiles.
+
+Perspectives d'amélioration :
+*   Utilisation de modèles de Deep Learning type BERT pour une meilleure représentation contextuelle.
+*   Techniques d'augmentation de données pour les classes minoritaires.
+*   Exploration de méthodes ensemble combinant les deux approches.
