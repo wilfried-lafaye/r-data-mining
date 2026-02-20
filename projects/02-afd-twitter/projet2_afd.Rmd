@@ -1,6 +1,6 @@
 ---
-title: "Analyse Factorielle Discriminante"
-subtitle: "Projet 2 : Twitter Sentiment Analysis"
+title: "Discriminant Factor Analysis"
+subtitle: "Project 2: Twitter Sentiment Analysis"
 author: 
   - Marie Bouetel
   - Wilfried LAFAYE
@@ -86,172 +86,172 @@ knitr::opts_chunk$set(echo = TRUE, message = FALSE, warning = FALSE, fig.align =
 
 # Introduction
 
-Ce projet s'appuie sur le jeu de données **Twitter Sentiment Analysis Dataset**.
+This project is based on the **Twitter Sentiment Analysis Dataset**.
 
-## Vue d'ensemble du jeu de données
+## Dataset Overview
 
-Il s'agit d'un ensemble de données d'analyse de sentiments au niveau des entités sur Twitter. Pour chaque observation, nous disposons d'un **message** (tweet) et d'une **entité** (sujet, marque, jeu vidéo, etc.). La tâche consiste à prédire le sentiment exprimé dans le message à propos de cette entité spécifique.
+This is an entity-level sentiment analysis dataset from Twitter. For each observation, we have a **message** (tweet) and an **entity** (topic, brand, video game, etc.). The task is to predict the sentiment expressed in the message regarding that specific entity.
 
-Les données sont annotées selon les classes suivantes :
-*   **Positive** (Positif)
-*   **Negative** (Négatif)
-*   **Neutral** (Neutre)
-*   **Irrelevant** (Non pertinent)
+The data is annotated according to the following classes:
+*   **Positive**
+*   **Negative**
+*   **Neutral**
+*   **Irrelevant**
 
-## Objectifs de l'étude
+## Study Objectives
 
-Notre analyse se décompose en plusieurs étapes :
+Our analysis is broken down into several stages:
 
-1.  **Classification binaire (2 classes)** : Positif vs Négatif. C'est le cas le plus simple et permet d'établir une baseline solide.
-2.  **Classification ternaire (3 classes)** : Positif, Négatif, Neutre (en fusionnant Neutre et Irrelevant).
-3.  **Classification complète (4 classes)** : Utilisation de toutes les classes, avec une approche hiérarchique pour améliorer la précision.
+1.  **Binary classification (2 classes)**: Positive vs Negative. This is the simplest case and establishes a solid baseline.
+2.  **Ternary classification (3 classes)**: Positive, Negative, Neutral (by merging Neutral and Irrelevant).
+3.  **Full classification (4 classes)**: Using all classes, with a hierarchical approach to improve accuracy.
 
-La métrique principale utilisée pour évaluer la qualité de notre classification sera la **précision (Accuracy Top-1)**.
+The primary metric used to evaluate our classification quality will be **Accuracy (Top-1)**.
 
-## Chargement et Partitionnement des données
+## Data Loading and Partitioning
 
-Afin de garantir une évaluation rigoureuse, nous utilisons uniquement le fichier **twitter_training.csv**. 
-**Pourquoi ?** Nous avons détecté que le fichier de validation fourni par défaut était un sous-ensemble du fichier d'entraînement, ce qui créait une fuite de données (Data Leakage) et faussait les résultats.
+To ensure a rigorous evaluation, we solely use the **twitter_training.csv** file. 
+**Why?** We detected that the default validation file provided was a subset of the training file, creating data leakage and skewing results.
 
-Nous procédons donc à un découpage manuel :
-*   **80%** des données pour l'entraînement (Word2Vec + AFD).
-*   **20%** des données pour la validation finale (test de généralisation).
+Therefore, we perform a manual split:
+*   **80%** of data for training (Word2Vec + AFD/LDA).
+*   **20%** of data for final validation (generalization test).
 
 ```{r data-loading-split}
-# Chargement des packages nécessaires
+# Load necessary packages
 invisible(suppressPackageStartupMessages(library(tidyverse)))
 invisible(suppressPackageStartupMessages(library(tm)))
 
-# 1. Chargement du dataset principal
+# 1. Load main dataset
 col_names <- c("id", "entity", "sentiment", "text")
 training_file <- "../data/twitter_training.csv"
 all_data_raw <- read_csv(training_file, col_names = col_names, show_col_types = FALSE)
 
-# 2. Nettoyage et Intégration AI (Gemini)
-# Chargement du fichier traité par l'IA
+# 2. Cleaning and AI Integration (Gemini)
+# Load AI-processed file
 gemini_file <- "../data/twitter_training_gemini.csv"
 
 if (file.exists(gemini_file)) {
-  # Si le fichier Gemini existe, on l'utilise
+  # If Gemini file exists, use it
   all_data_clean <- read_csv(gemini_file, show_col_types = FALSE) %>%
     rename(sentiment_original = original_sentiment, 
-           sentiment = llm_sentiment) %>% # On utilise le sentiment corrigé par l'IA comme référence
+           sentiment = llm_sentiment) %>% # Use AI-corrected sentiment as reference
     distinct(id, .keep_all = TRUE) %>%
     filter(!is.na(text)) %>%
-    # Nettoyage Chirurgical demandé par l'utilisateur
-    # 1. On supprime les tweets de moins de 2 caractères (ex: ".", "[")
+    # Surgical cleaning requested by user
+    # 1. Remove tweets with less than 2 characters (e.g., ".", "[")
     filter(nchar(trimws(text)) > 1) %>% 
-    # 2. On supprime les mots vides isolés (Bruit : "The", "So", "And"..)
+    # 2. Remove isolated stopwords (Noise: "The", "So", "And"..)
     filter(!str_detect(text, regex("^(the|so|and|but|or|of|to|in|on|at|by|for)$", ignore_case = TRUE)))
     
-  cat("=== Chargement Données AI (Gemini) ===\n")
+  cat("=== AI Data Loaded (Gemini) ===\n")
   cat("Source :", gemini_file, "\n")
 } else {
-  # Fallback sur le nettoyage manuel si le fichier AI n'existe pas
+  # Fallback to manual cleaning if AI file is missing
   all_data_clean <- all_data_raw %>%
     distinct(id, .keep_all = TRUE) %>%
     filter(!is.na(text))
-  cat("=== Chargement Données Brutes (Fallback) ===\n")
+  cat("=== Raw Data Loaded (Fallback) ===\n")
 }
 
-cat("Observations retenues :", nrow(all_data_clean), "\n")
+cat("Retained observations:", nrow(all_data_clean), "\n")
 ```
 
-## Analyse Critique de la Qualité des Données
+## Critical Analysis of Data Quality
 
-Avant de procéder à la modélisation, il est essentiel d'examiner la qualité intrinsèque du jeu de données. Notre analyse a révélé **4 problèmes majeurs** qui expliquent pourquoi ce dataset est particulièrement difficile à classifier avec rigueur.
+Before modeling, it is essential to examine the intrinsic quality of the dataset. Our analysis revealed **4 major issues** which explain why this dataset is particularly challenging to classify rigorously.
 
-### Problème 1 : Augmentation Artificielle par Paraphrase
+### Issue 1: Artificial Augmentation via Paraphrasing
 
-Le dataset contient de nombreuses répétitions d'un même tweet sous forme de paraphrases. Chaque ID unique est associé à environ **6 variantes** du même message :
+The dataset contains numerous repetitions of the same tweet as paraphrases. Each unique ID is associated with approximately **6 variants** of the same message:
 
 ```{r quality-paraphrase, echo=TRUE}
-# Exemple : ID 2401 - Variations du même tweet
+# Example: ID 2401 - Variations of the same tweet
 paraphrase_example <- all_data_raw %>%
   filter(id == 2401) %>%
   select(id, sentiment, text)
 
-cat("=== Exemple de Paraphrases (ID 2401) ===\n")
-cat("Nombre de variantes :", nrow(paraphrase_example), "\n\n")
+cat("=== Paraphrase Example (ID 2401) ===\n")
+cat("Number of variants:", nrow(paraphrase_example), "\n\n")
 for (i in 1:min(4, nrow(paraphrase_example))) {
   cat(paste0("[", i, "] ", substr(paraphrase_example$text[i], 1, 70), "...\n"))
 }
 ```
 
-> **Impact** : Si on fait un split aléatoire par ligne, le modèle voit 5 variantes en training et la 6ème en test. Il fait du *pattern matching* au lieu d'apprendre le sentiment. C'est pourquoi notre méthode de **split par ID unique** est la seule garantie d'éviter cette fuite de données.
+> **Impact**: If a random row-wise split is performed, the model sees 5 variants in training and the 6th in test. It performs *pattern matching* rather than learning the sentiment. This is why our **unique ID split** method is the only guarantee against data leakage.
 
-### Problème 2 : Détérioration Sémantique (Corruption)
+### Issue 2: Semantic Deterioration (Corruption)
 
-Certaines variantes sont sémantiquement altérées au point de perdre tout sens. Des tweets complets deviennent parfois **un seul mot** tout en conservant leur label original :
+Some variants are semantically altered to the point of losing all meaning. Full tweets sometimes become **a single word** while retaining their original label:
 
 ```{r quality-corruption, echo=TRUE}
-# Recherche de lignes très courtes (moins de 5 caractères) avec un label valide
+# Search for very short rows (less than 5 chars) with a valid label
 short_rows <- all_data_raw %>%
   filter(nchar(as.character(text)) <= 5 & !is.na(sentiment)) %>%
   slice_sample(n = 8)
 
-cat("=== Exemples de Lignes Corrompues ===\n")
-cat("(Textes de moins de 5 caractères avec un label de sentiment)\n\n")
+cat("=== Corrupted Rows Examples ===\n")
+cat("(Texts under 5 characters with a sentiment label)\n\n")
 for (i in 1:nrow(short_rows)) {
   cat(paste0("[", short_rows$sentiment[i], "] \"", short_rows$text[i], "\"\n"))
 }
 ```
 
-> **Impact** : Comment un mot isolé comme "was" ou "is" peut-il véhiculer un sentiment "Positif" ou "Négatif" ? Ces lignes sont du **bruit pur** que notre modèle doit ignorer.
+> **Impact**: How can an isolated word like "was" or "is" convey a "Positive" or "Negative" sentiment? These lines are **pure noise** that our model must ignore.
 
-### Problème 3 : Chevauchement Training / Validation Fourni
+### Issue 3: Training / Validation Overlap
 
-Le fichier `twitter_validation.csv` fourni par défaut n'est **PAS indépendant** du fichier d'entraînement :
+The default `twitter_validation.csv` file provided is **NOT independent** from the training file:
 
 ```{r quality-leakage, echo=TRUE}
-# Chargement du fichier de validation fourni
+# Load provided validation file
 validation_file <- "../data/twitter_validation.csv"
 if(file.exists(validation_file)) {
   valid_raw <- read_csv(validation_file, col_names = col_names, show_col_types = FALSE)
   
-  # Comparaison par texte (nettoyé en minuscules)
+  # Compare by text (cleaned to lowercase)
   clean_text <- function(x) str_to_lower(str_trim(as.character(x)))
   train_texts <- unique(clean_text(all_data_raw$text))
   valid_texts <- unique(clean_text(valid_raw$text))
   common_texts <- intersect(train_texts, valid_texts)
   
-  cat("=== Analyse du Chevauchement Train/Validation ===\n")
-  cat("Phrases uniques dans Training   :", length(train_texts), "\n")
-  cat("Phrases uniques dans Validation :", length(valid_texts), "\n")
-  cat("Phrases COMMUNES (identiques)   :", length(common_texts), "\n")
-  cat("Pourcentage de Leakage          :", round(length(common_texts)/length(valid_texts)*100, 1), "%\n")
+  cat("=== Train/Validation Overlap Analysis ===\n")
+  cat("Unique phrases in Training   :", length(train_texts), "\n")
+  cat("Unique phrases in Validation :", length(valid_texts), "\n")
+  cat("COMMON phrases (identical)   :", length(common_texts), "\n")
+  cat("Leakage Percentage           :", round(length(common_texts)/length(valid_texts)*100, 1), "%\n")
 }
 ```
 
-> **Impact** : Plus de **50% des phrases de validation** sont déjà présentes dans le training ! Les modèles utilisant ce split naïf atteignent ~98% d'accuracy, mais c'est de la **mémorisation, pas de la généralisation**.
+> **Impact**: Over **50% of validation phrases** are already present in training! Models using this naive split achieve ~98% accuracy, but it's **memorization, not generalization**.
 
-### Problème 4 : Hallucinations dans les Variantes
+### Issue 4: Hallucinations within Variants
 
-Les algorithmes de paraphrase ont parfois **halluciné des entités** ou changé complètement le sujet du tweet :
+Paraphrasing algorithms sometimes **hallucinate entities** or completely change the tweet's subject:
 
 ```{r quality-hallucination, echo=TRUE}
-# Exemple : ID 2417 où "borderlands" devient d'autres sujets
+# Example: ID 2417 where "borderlands" becomes other subjects
 hallucination_example <- all_data_raw %>%
   filter(id == 2417) %>%
   select(text)
 
-cat("=== Exemple d'Hallucinations (ID 2417) ===\n")
-cat("Sujet original : Borderlands\n\n")
+cat("=== Hallucination Example (ID 2417) ===\n")
+cat("Original subject: Borderlands\n\n")
 for (i in 1:min(4, nrow(hallucination_example))) {
   snippet <- substr(hallucination_example$text[i], 1, 90)
   cat(paste0("[", i, "] ", snippet, "...\n"))
 }
 ```
 
-> **Conclusion** : Ce jeu de données est un **stress-test** typique des benchmarks académiques. Atteindre ~48% d'accuracy sur 4 classes avec un split propre est un résultat **honnête et scientifiquement valide**, contrairement aux 98% obtenus par mémorisation de paraphrases.
+> **Conclusion**: This dataset is a typical academic benchmark **stress-test**. Achieving ~48% accuracy on 4 classes with a clean split is an **honest and scientifically valid** result, unlike the 98% obtained through paraphrase memorization.
 
 ```{r continue-prep}
-# 3. Préparation pour l'étude principale (2 classes)
+# 3. Preparation for main study (2 classes)
 training_data_full <- all_data_clean %>%
   filter(sentiment %in% c("Positive", "Negative")) %>%
   mutate(sentiment = factor(sentiment, levels = c("Negative", "Positive")))
 
-# Split par ID Unique pour l'étude à 2 classes
+# Split by Unique ID for 2-class study
 unique_ids_2c <- unique(training_data_full$id)
 set.seed(42)
 train_ids_2c <- sample(unique_ids_2c, size = 0.8 * length(unique_ids_2c))
@@ -259,30 +259,30 @@ train_ids_2c <- sample(unique_ids_2c, size = 0.8 * length(unique_ids_2c))
 training_data <- training_data_full %>% filter(id %in% train_ids_2c)
 validation_data <- training_data_full %>% filter(!(id %in% train_ids_2c))
 
-cat("\n=== Partitionnement (2 classes) ===\n")
-cat("Entraînement :", nrow(training_data), " (80%)\n")
-cat("Validation   :", nrow(validation_data), " (20%)\n")
+cat("\n=== Partitioning (2 classes) ===\n")
+cat("Training   :", nrow(training_data), " (80%)\n")
+cat("Validation :", nrow(validation_data), " (20%)\n")
 ```
 
-# Méthodologie
+# Methodology
 
-## Pré-traitement des données
+## Data Preprocessing
 
-Le nettoyage des données textuelles est une étape cruciale pour l'analyse de sentiments. L'objectif est de **réduire le bruit** tout en **conservant les mots porteurs de sens** qui permettront de discriminer les classes de sentiment.
+Cleaning textual data is a crucial step in sentiment analysis. The goal is to **reduce noise** while **retaining meaningful words** that discriminate sentiment classes.
 
-### Justification des transformations appliquées
+### Justification of applied transformations
 
-Nous appliquons les transformations suivantes, chacune ayant un rôle spécifique :
+We apply the following transformations, each serving a specific role:
 
-1. **Suppression des URLs** (`https://...`, `www...`)
-2. **Suppression des mentions** (`@utilisateur`)
-3. **Suppression des hashtags** (`#sujet`)
-4. **Suppression des caractères spéciaux et de la ponctuation**
-5. **Conversion en minuscules**
-6. **Suppression des mots vides (stopwords)**
+1. **Remove URLs** (`https://...`, `www...`)
+2. **Remove mentions** (`@user`)
+3. **Remove hashtags** (`#topic`)
+4. **Remove special characters and punctuation**
+5. **Convert to lowercase**
+6. **Remove stopwords**
 
 ```{r text-cleaning}
-# Fonction de nettoyage des tweets (Vectorisée)
+# Tweet cleaning function (Vectorized)
 clean_texts <- function(texts) {
   # 1. URLs
   texts <- gsub("https?://\\S+|www\\.\\S+", "", texts)
@@ -290,57 +290,57 @@ clean_texts <- function(texts) {
   texts <- gsub("@\\w+", "", texts)
   # 3. Hashtags
   texts <- gsub("#\\w+", "", texts)
-  # 4. Caractères spéciaux
+  # 4. Special characters
   texts <- gsub("[^a-zA-Z ]", "", texts)
-  # 5. Minuscules
+  # 5. Lowercase
   texts <- tolower(texts)
-  # 6. Espaces multiples
+  # 6. Multiple spaces
   texts <- gsub(" +", " ", texts)
   # 7. Trim
   texts <- trimws(texts)
   return(texts)
 }
 
-# Suppression des mots vides (stopwords)
-# Note : Nous conservons les stopwords car ils aident à identifier les tweets "Neutres"
-# (phrases de liaison comme "the", "is", "of" sont caractéristiques de ce style)
+# Stopwords removal
+# Note: We intentionally keep stopwords as they help identify "Neutral" tweets
+# (linking phrases like "the", "is", "of" characterize this style)
 stopwords_en <- stopwords("en")
 remove_stopwords_vec <- function(texts) {
-  return(texts)  # Stopwords conservés volontairement
+  return(texts)  # Stopwords kept intentionally
 }
 
-# Application du nettoyage global sur all_data_clean pour réutilisation partout
-cat("=== Nettoyage global des données (AVEC Stopwords) ===\n")
+# Global cleaning application on all_data_clean for reuse
+cat("=== Global Data Cleaning (WITH Stopwords) ===\n")
 all_data_clean$text_clean <- clean_texts(all_data_clean$text)
 all_data_clean$text_clean <- remove_stopwords_vec(all_data_clean$text_clean)
 
-# Répercussion sur les sous-ensembles (par jointure ou mise à jour directe)
+# Apply to subsets (via join or direct update)
 training_data$text_clean <- all_data_clean$text_clean[match(training_data$id, all_data_clean$id)]
 validation_data$text_clean <- all_data_clean$text_clean[match(validation_data$id, all_data_clean$id)]
 
-cat("Nettoyage des données terminé!\n")
+cat("Data cleaning completed!\n")
 ```
 
 ```{r cleaning-results}
-# Affichage avant/après nettoyage
-cat("=== Exemples de nettoyage ===\n\n")
+# Display before/after cleaning
+cat("=== Cleaning Examples ===\n\n")
 
 set.seed(42)
 sample_idx <- sample(1:nrow(training_data), 5)
 
 for (i in sample_idx) {
-  cat("AVANT:", substr(training_data$text[i], 1, 80), "...\n")
-  cat("APRÈS:", substr(training_data$text_clean[i], 1, 80), "\n\n")
+  cat("BEFORE:", substr(training_data$text[i], 1, 80), "...\n")
+  cat("AFTER :", substr(training_data$text_clean[i], 1, 80), "\n\n")
 }
 
-# Suppression des lignes avec texte vide après nettoyage
+# Remove rows with empty text after cleaning
 training_data <- training_data %>% filter(text_clean != "")
 validation_data <- validation_data %>% filter(text_clean != "")
 ```
 
 ```{r sentiment-encoding}
-# Conversion des étiquettes de sentiment
-cat("=== Encodage numérique des sentiments ===\n\n")
+# Numeric encoding of sentiment labels
+cat("=== Sentiment Numeric Encoding ===\n\n")
 sentiment_levels <- levels(training_data$sentiment)
 print(sentiment_levels)
 
@@ -348,42 +348,42 @@ training_data <- training_data %>% mutate(sentiment_num = as.numeric(sentiment))
 validation_data <- validation_data %>% mutate(sentiment_num = as.numeric(sentiment))
 ```
 
-# Ingénierie des caractéristiques : Word Embeddings (Word2Vec)
+# Feature Engineering: Word Embeddings (Word2Vec)
 
-Nous passons d'une représentation **creuse** (TF-IDF) à une représentation **dense** (Word Embeddings).
-L'idée est de représenter chaque mot par un vecteur de nombres réels (ex: taille 100) qui capture le sens sémantique.
-Ensuite, pour représenter un tweet, nous ferons la **moyenne des vecteurs** des mots qui le composent. Les avantages sont multiples :
-- Capture de la sémantique ("good" et "great" ont des vecteurs proches).
-- Réduction automatique de la dimensionnalité (100 dimensions vs 5000+ avec TF-IDF).
-- Pas de problème de sparsité.
+We move from a **sparse** representation (TF-IDF) to a **dense** representation (Word Embeddings).
+The idea is to represent each word with a vector of real numbers (e.g., size 100) capturing semantic meaning.
+Then, to represent a tweet, we compute the **mean of vectors** of the words it contains. The advantages are multiple:
+- Semantics captured ("good" and "great" have close vectors).
+- Automatic dimensionality reduction (100 dimensions vs 5000+ with TF-IDF).
+- No sparsity issues.
 
-## Entraînement du modèle Word2Vec
+## Word2Vec Model Training
 
 ```{r word2vec-training}
-# Installation et chargement du package word2vec
+# Install and load word2vec package
 if (!require("word2vec")) install.packages("word2vec", repos = "https://cloud.r-project.org")
 library(word2vec)
 
-# 1. Détection et Application des Bigrams (n-grams)
-# Cette étape permet d'apprendre des vecteurs pour des expressions comme "not_bad"
-cat("=== Détection des Bigrams fréquents ===\n")
+# 1. Bigram Detection and Application (n-grams)
+# This step learns vectors for expressions like "not_bad"
+cat("=== Detecting Frequent Bigrams ===\n")
 
 find_frequent_bigrams <- function(texts, top_n = 200) {
-  # Tokenisation simple pour compter les paires
+  # Simple tokenization to count pairs
   words_list <- strsplit(texts, " ")
   bigrams <- unlist(lapply(words_list, function(w) {
     if(length(w) < 2) return(NULL)
     paste(w[-length(w)], w[-1], sep = "_")
   }))
-  # Comptage et sélection des meilleurs
+  # Counting and selecting best
   sort(table(bigrams), decreasing = TRUE)[1:top_n]
 }
 
-# Extraction des bigrams les plus fréquents du jeu d'entraînement
+# Extract most frequent bigrams from training set
 top_bigrams <- find_frequent_bigrams(training_data$text_clean, top_n = 200)
 bigram_list <- names(top_bigrams)
 
-# Fonction pour fusionner les mots formant un bigram (ex: "not bad" -> "not_bad")
+# Function to merge words forming a bigram (e.g., "not bad" -> "not_bad")
 apply_bigrams <- function(texts, bigrams) {
   for(bg in bigrams) {
     target <- gsub("_", " ", bg)
@@ -392,57 +392,57 @@ apply_bigrams <- function(texts, bigrams) {
   return(texts)
 }
 
-cat("Transformation des textes avec les bigrams...\n")
+cat("Transforming texts with bigrams...\n")
 training_data$text_bigrams <- apply_bigrams(training_data$text_clean, bigram_list)
 validation_data$text_bigrams <- apply_bigrams(validation_data$text_clean, bigram_list)
 
-# 2. Entraînement du modèle Word2Vec (Skip-Gram avec Bigrams)
-cat("=== Entraînement du modèle Word2Vec (Bigrams) ===\n")
+# 2. Train Word2Vec Model (Skip-Gram with Bigrams)
+cat("=== Training Word2Vec Model (Bigrams) ===\n")
 
-# Tokenisation en liste pour word2vec (plus robuste)
+# Tokenization into list for word2vec (more robust)
 train_tokens_list <- strsplit(training_data$text_bigrams, " ")
-# Sécurité : suppression des éléments vides ou NULL
+# Safeguard: remove empty elements or NULL
 train_tokens_list <- train_tokens_list[sapply(train_tokens_list, length) > 0]
 
 set.seed(42)
 w2v_model <- word2vec(x = train_tokens_list, type = "skip-gram", dim = 500, window = 7, min_count = 5, iter = 30, threads = 1)
 
-cat("Modèle Word2Vec entraîné avec succès!\n")
+cat("Word2Vec model trained successfully!\n")
 vocab_size <- nrow(as.matrix(w2v_model))
-cat("Taille du vocabulaire appris :", vocab_size, "mots (bigrams inclus)\n")
+cat("Learned vocabulary size:", vocab_size, "words (including bigrams)\n")
 ```
 
-## Vectorisation des Tweets (Document Embeddings)
+## Vectorization of Tweets (Document Embeddings)
 
-Pour chaque tweet, nous construisont un vecteur en moyennant les vecteurs de ses mots.
+For each tweet, we construct a vector by averaging the vectors of its words.
 
 ```{r doc-vectorization}
-# Fonction pour vectoriser un ensemble de textes
+# Function to vectorize a set of texts
 get_document_vectors <- function(model, texts) {
-  # Tokenisation explicite en liste pour éviter les erreurs doc2vec()
+  # Explicit tokenization into list to avoid doc2vec() errors
   tokens_list <- strsplit(texts, " ")
   
-  # doc2vec calcule la moyenne des embeddings
+  # doc2vec computes the mean of embeddings
   doc_vectors <- doc2vec(model, tokens_list)
   
-  # Remplacement des NA par des zéros
+  # Replacing NA with zeros
   doc_vectors[is.na(doc_vectors)] <- 0
   
   return(as.data.frame(doc_vectors))
 }
 
-cat("=== Vectorisation des tweets (Bigrams) ===\n")
+cat("=== Vectorizing Tweets (Bigrams) ===\n")
 
-# Vectorisation avec les textes transformés
+# Vectorization with transformed texts
 train_vectors <- get_document_vectors(w2v_model, training_data$text_bigrams)
 valid_vectors <- get_document_vectors(w2v_model, validation_data$text_bigrams)
 
-cat("Vecteurs générés avec succès.\n")
+cat("Vectors generated successfully.\n")
 ```
 
 ```{r prepare-afd-data}
-# Préparation des données finales pour l'AFD
-# Combinaison des vecteurs denses avec les labels de sentiment
+# Final data preparation for AFD/LDA
+# Combining dense vectors with sentiment labels
 
 train_afd <- data.frame(
   sentiment = training_data$sentiment,
@@ -455,54 +455,54 @@ valid_afd <- data.frame(
 )
 ```
 
-# Implémentation de l'AFD
+# AFD Implementation
 
-## Fondements mathématiques
+## Mathematical Foundations
 
-L'**Analyse Factorielle Discriminante** (AFD/LDA) est utilisée ici sur les vecteurs denses pour trouver l'axe qui sépare le mieux les sentiments Positifs et Négatifs.
-Contrairement à l'approche TF-IDF où l'AFD souffrait du grand nombre de variables, ici elle travaille sur 100 variables denses et pertinentes, ce qui est idéal.
+**Discriminant Factor Analysis** (AFD/LDA) is used here on dense vectors to find the axis that best separates Positive and Negative sentiments.
+Unlike the TF-IDF approach where AFD suffered from the large number of variables, here it works on 100 dense and relevant variables, which is ideal.
 
-## Application sous R avec MASS
+## Application in R with MASS
 
 ```{r lda-training}
 library(MASS)
 
-# Vérification variance (rarement nul avec word2vec mais sécurité)
+# Variance check (rarely zero with word2vec but safe to do)
 var_cols <- apply(train_afd[, -1], 2, var) > 1e-10
 train_afd_clean <- train_afd[, c(TRUE, var_cols)]
 
-cat("=== Entraînement du modèle LDA ===\n")
-cat("Variables utilisées:", ncol(train_afd_clean) - 1, "\n")
+cat("=== Training LDA Model ===\n")
+cat("Variables used:", ncol(train_afd_clean) - 1, "\n")
 cat("Observations:", nrow(train_afd_clean), "\n")
 
-# Entraînement
+# Training
 lda_model <- lda(sentiment ~ ., data = train_afd_clean)
-cat("Modèle LDA entraîné avec succès!\n")
+cat("LDA Model trained successfully!\n")
 ```
 
 ```{r lda-projection}
-# Projection des données sur les axes discriminants
+# Projecting data onto discriminant axes
 
 # Training
 train_projected <- predict(lda_model, train_afd_clean)
 train_lda_scores <- as.data.frame(train_projected$x)
 train_lda_scores$sentiment <- train_afd_clean$sentiment
 
-# Validation (mêmes colonnes)
+# Validation (same columns)
 valid_afd_clean <- valid_afd[, names(train_afd_clean)]
 valid_projected <- predict(lda_model, valid_afd_clean)
 valid_lda_scores <- as.data.frame(valid_projected$x)
 valid_lda_scores$sentiment <- valid_afd_clean$sentiment
 
-cat("=== Données projetées ===\n")
+cat("=== Projected Data ===\n")
 head(train_lda_scores)
 ```
 
-# Résultats
+# Results
 
-## Visualisation
+## Visualization
 
-### Distribution sur l'axe discriminant LD1
+### Distribution on Discriminant Axis LD1
 
 ```{r viz-ld1, fig.width=10, fig.height=6}
 library(ggplot2)
@@ -517,74 +517,74 @@ ggplot(train_sample, aes(x = LD1, fill = sentiment)) +
   geom_density(alpha = 0.6) +
   scale_fill_manual(values = sentiment_colors) +
   labs(
-    title = "Séparation des sentiments sur l'axe LD1 (Word2Vec + AFD)",
-    subtitle = "Les vecteurs denses permettent généralement une séparation plus nette",
-    x = "Score LD1",
-    y = "Densité"
+    title = "Sentiment Separation on LD1 Axis (Word2Vec + AFD)",
+    subtitle = "Dense vectors generally allow for cleaner separation",
+    x = "LD1 Score",
+    y = "Density"
   ) +
   theme_minimal(base_size = 14)
 ```
 
-## Performance de classification
+## Classification Performance
 
-Pour détecter le sur-apprentissage (overfitting), on compare la performance sur les données d'entraînement et de validation.
+To detect overfitting, we compare performance on training and validation data.
 
 ```{r classification-metrics}
-# --- Performance sur le Training (pour check overfitting) ---
+# --- Performance on Training (for checking overfitting) ---
 pred_train <- train_projected$class
 actual_train <- train_afd_clean$sentiment
 acc_train <- sum(pred_train == actual_train) / length(actual_train)
 
-# --- Performance sur la Validation ---
+# --- Performance on Validation ---
 predicted_classes <- valid_projected$class
 actual_classes <- valid_afd_clean$sentiment
 acc_valid <- sum(predicted_classes == actual_classes) / length(actual_classes)
 
-cat("=== Comparaison Accuracy (Overfitting Check) ===\n")
+cat("=== Accuracy Comparison (Overfitting Check) ===\n")
 cat(sprintf("Training Accuracy   : %.2f%%\n", acc_train * 100))
 cat(sprintf("Validation Accuracy : %.2f%%\n", acc_valid * 100))
 
 gap <- (acc_train - acc_valid) * 100
-cat(sprintf("Ecart (Gap)         : %.2f points\n", gap))
+cat(sprintf("Gap                 : %.2f points\n", gap))
 
 if(gap > 10) {
-  cat("/!\\ ATTENTION : Écart important (>10%), risque de sur-apprentissage.\n")
+  cat("/!\\ WARNING : Significant gap (>10%), high risk of overfitting.\n")
 } else if (gap > 5) {
-  cat("Attention modérée : Écart notable entre 5% et 10%.\n")
+  cat("Moderate warning: Notable gap between 5% and 10%.\n")
 } else {
-  cat("Bonne généralisation : Écart faible (<5%).\n")
+  cat("Good generalization: Small gap (<5%).\n")
 }
 
-# Matrice de confusion (Validation)
-cat("\n=== Matrice de confusion (Validation) ===\n")
-table(Réel = actual_classes, Prédit = predicted_classes)
+# Confusion Matrix (Validation)
+cat("\n=== Confusion Matrix (Validation) ===\n")
+table(Actual = actual_classes, Predicted = predicted_classes)
 ```
 
-## Points Clés de la Méthodologie
+## Key Methodological Points
 
-Notre approche repose sur deux choix méthodologiques essentiels :
+Our approach relies on two essential methodological choices:
 
-1.  **Split par ID Unique** : Les tweets paraphrasés partagent le même ID. Un split aléatoire classique entraînerait une fuite de données (le modèle verrait des paraphrases en training et leur original en validation). Le split par ID garantit l'indépendance des ensembles.
+1.  **Unique ID Split**: Paraphrased tweets share the same ID. A classic random split would lead to data leakage (the model would see paraphrases in training and their original in validation). Splitting by ID ensures dataset independence.
 
-2.  **Conservation des Stopwords** : Contrairement à l'approche classique, nous conservons les mots vides. Ils sont essentiels pour identifier les tweets "Neutres" (phrases de liaison comme "the", "is", "of").
+2.  **Keeping Stopwords**: Unlike the classic approach, we keep stopwords. They are essential for identifying "Neutral" tweets (linking phrases like "the", "is", "of").
 
 > [!TIP]
-> Ces deux choix combinés nous permettent d'obtenir une évaluation **honnête** de la performance du modèle, avec un écart Training/Validation inférieur à 1%.
+> Combining these two choices allows us to obtain an **honest** evaluation of the model's performance, with a Training/Validation gap of less than 1%.
 
-# Étude comparative : Impact du nombre de classes
+# Comparative Study: Impact of Number of Classes
 
-Nous réutilisons le modèle Word2Vec entraîné pour vectoriser et classifier des jeux de données à 3 et 4 classes (en utilisant les données dédoublonnées).
+We reuse the trained Word2Vec model to vectorize and classify datasets with 3 and 4 classes (using deduplicated data).
 
 ```{r comparative-study, fig.width=10, fig.height=6}
-cat("=== Étude comparative des approches ===\n")
+cat("=== Comparative Approaches Study ===\n")
 accuracy_2_classes <- acc_valid
 
-# 1. Préparation des données 4 classes (Positive, Negative, Neutral, Irrelevant)
+# 1. 4-class Data Prep (Positive, Negative, Neutral, Irrelevant)
 all_data_4c <- all_data_clean %>% 
   filter(sentiment %in% c("Positive", "Negative", "Neutral", "Irrelevant")) %>%
   filter(text_clean != "")
 
-# Split par ID Unique (reproductible)
+# Unique ID Split (Repro)
 unique_ids_4c <- unique(all_data_4c$id)
 set.seed(42)
 train_ids_4c <- sample(unique_ids_4c, size = 0.8 * length(unique_ids_4c))
@@ -592,11 +592,11 @@ train_ids_4c <- sample(unique_ids_4c, size = 0.8 * length(unique_ids_4c))
 training_4c <- all_data_4c %>% filter(id %in% train_ids_4c)
 validation_4c <- all_data_4c %>% filter(!(id %in% train_ids_4c))
 
-# Vectorisation (une seule fois pour tous les modèles 3/4/H)
+# Vectorization (done once for 3/4/H models)
 train_vec_4c <- get_document_vectors(w2v_model, training_4c$text_clean)
 valid_vec_4c <- get_document_vectors(w2v_model, validation_4c$text_clean)
 
-# --- 4 Classes (Approche Directe) ---
+# --- 4 Classes (Direct Approach) ---
 train_df_4c <- data.frame(sentiment = factor(training_4c$sentiment), train_vec_4c)
 valid_df_4c <- data.frame(sentiment = factor(validation_4c$sentiment), valid_vec_4c)
 
@@ -604,16 +604,16 @@ lda_4c <- lda(sentiment ~ ., data = train_df_4c)
 pred_4c <- predict(lda_4c, valid_df_4c)$class
 accuracy_4_classes <- mean(pred_4c == validation_4c$sentiment)
 
-# --- Overfitting Check (4 classes directe) ---
+# --- Overfitting Check (4 classes direct) ---
 pred_4c_train <- predict(lda_4c, train_df_4c)$class
 acc_4c_train <- mean(pred_4c_train == training_4c$sentiment)
-cat("\n=== Overfitting Check (4 classes - Directe) ===\n")
+cat("\n=== Overfitting Check (4 classes - Direct) ===\n")
 cat(sprintf("Training Accuracy   : %.2f%%\n", acc_4c_train * 100))
 cat(sprintf("Validation Accuracy : %.2f%%\n", accuracy_4_classes * 100))
-cat(sprintf("Écart (Gap)         : %.2f points\n", (acc_4c_train - accuracy_4_classes) * 100))
+cat(sprintf("Gap                 : %.2f points\n", (acc_4c_train - accuracy_4_classes) * 100))
 
-# --- 3 Classes (Approche Directe) ---
-# Fusion Neutral/Irrelevant en "Neutral"
+# --- 3 Classes (Direct Approach) ---
+# Merge Neutral/Irrelevant into "Neutral"
 training_3c <- training_4c %>% mutate(sentiment_3c = ifelse(sentiment == "Irrelevant", "Neutral", sentiment))
 validation_3c <- validation_4c %>% mutate(sentiment_3c = ifelse(sentiment == "Irrelevant", "Neutral", sentiment))
 
@@ -625,24 +625,24 @@ pred_3c <- predict(lda_3c, valid_df_3c)$class
 accuracy_3_classes <- mean(pred_3c == validation_3c$sentiment_3c)
 ```
 
-# --- 4 Classes (Approche Hiérarchique) ---
+# --- 4 Classes (Hierarchical Approach) ---
 
-L'approche hiérarchique vise à résoudre la confusion entre les classes polaires (Positif/Négatif) et les classes informatives (Neutre/Irrelevant) en décomposant le problème en deux étapes logiques :
+The hierarchical approach aims to resolve the confusion between polar classes (Positive/Negative) and informative classes (Neutral/Irrelevant) by breaking the problem down into two logical steps:
 
-1.  **Niveau 1 : Distinguer le ton (Subjectif vs Objectif)**
-    *   **Subjectif** : Tweets exprimant une émotion ou une opinion (labels *Positive* et *Negative*).
-    *   **Objectif** : Tweets factuels, de liaison ou hors-sujet (labels *Neutral* et *Irrelevant*).
+1.  **Level 1: Distinguish Tone (Subjective vs Objective)**
+    *   **Subjective**: Tweets expressing an emotion or opinion (labels *Positive* and *Negative*).
+    *   **Objective**: Factual linking or irrelevant tweets (labels *Neutral* and *Irrelevant*).
     
-2.  **Niveau 2 : Affiner la prédiction**
-    *   Si le tweet est jugé **Subjectif**, on arbitre entre *Positive* et *Negative*.
-    *   Si le tweet est jugé **Objectif**, on arbitre entre *Neutral* et *Irrelevant*.
+2.  **Level 2: Refine Prediction**
+    *   If the tweet is deemed **Subjective**, we choose between *Positive* and *Negative*.
+    *   If the tweet is deemed **Objective**, we choose between *Neutral* and *Irrelevant*.
 
 > [!NOTE]
-> **Pourquoi cette approche ?** Dans un espace latent (AFD), les tweets "Positifs" et "Négatifs" ont souvent des structures sémantiques très différentes des tweets "Neutres". En isolant d'abord la "subjectivité", on permet aux classifieurs de second niveau d'être plus spécialisés et donc plus précis.
+> **Why this approach?** In a latent space (AFD), "Positive" and "Negative" tweets often possess semantic structures sharply distinct from "Neutral" tweets. By first isolating "subjectivity", we allow second-level classifiers to be more specialized and accurate.
 
 ```{r hierarchical-classification}
-# Préparation des labels hiérarchiques
-# Type: Subjectif (Pos/Neg) vs Objectif (Neutral/Irrelevant)
+# Prepare hierarchical labels
+# Type: Subjective (Pos/Neg) vs Objective (Neutral/Irrelevant)
 training_4c <- training_4c %>% mutate(
   is_subjective = ifelse(sentiment %in% c("Positive", "Negative"), "Subjective", "Objective"),
   is_subjective = factor(is_subjective, levels = c("Objective", "Subjective"))
@@ -652,28 +652,28 @@ validation_4c <- validation_4c %>% mutate(
   is_subjective = factor(is_subjective, levels = c("Objective", "Subjective"))
 )
 
-# Modèle Niveau 1 : Subjectif vs Objectif
-cat("\n--- Niveau 1 : Subjectif vs Objectif ---\n")
+# Level 1 Model: Subjective vs Objective
+cat("\n--- Level 1: Subjective vs Objective ---\n")
 train_df_lvl1 <- data.frame(is_subjective = training_4c$is_subjective, train_vec_4c)
 lda_lvl1 <- lda(is_subjective ~ ., data = train_df_lvl1)
 pred_lvl1 <- predict(lda_lvl1, valid_df_4c[, -1])$class
 acc_lvl1 <- mean(pred_lvl1 == validation_4c$is_subjective)
-cat(sprintf("Accuracy Niveau 1 : %.2f%%\n", acc_lvl1 * 100))
+cat(sprintf("Level 1 Accuracy   : %.2f%%\n", acc_lvl1 * 100))
 
-# Modèle Niveau 2a : Positif vs Négatif (Uniquement sur données subjectives)
+# Level 2a Model: Positive vs Negative (Only on subjective data)
 train_subj_idx <- which(training_4c$is_subjective == "Subjective")
 train_df_subj <- data.frame(sentiment = factor(training_4c$sentiment[train_subj_idx], levels = c("Negative", "Positive")), 
                                train_vec_4c[train_subj_idx, ])
 lda_subj <- lda(sentiment ~ ., data = train_df_subj)
 
-# Modèle Niveau 2b : Neutre vs Irrelevant (Uniquement sur données objectives)
+# Level 2b Model: Neutral vs Irrelevant (Only on objective data)
 train_obj_idx <- which(training_4c$is_subjective == "Objective")
 train_df_obj <- data.frame(sentiment = factor(training_4c$sentiment[train_obj_idx], levels = c("Neutral", "Irrelevant")), 
                                train_vec_4c[train_obj_idx, ])
 lda_obj <- lda(sentiment ~ ., data = train_df_obj)
 
-# --- INFERENCE HIERARCHIQUE ---
-# On utilise le niveau 1 pour router chaque tweet de validation
+# --- HIERARCHICAL INFERENCE ---
+# We use level 1 to route each validation tweet
 final_h_preds <- character(nrow(validation_4c))
 for(i in 1:nrow(validation_4c)) {
   current_vec <- valid_vec_4c[i, , drop = FALSE]
@@ -685,10 +685,10 @@ for(i in 1:nrow(validation_4c)) {
 }
 
 accuracy_hierarchical <- mean(final_h_preds == validation_4c$sentiment)
-cat(sprintf("Accuracy Hiérarchique (4 classes) : %.2f%%\n", accuracy_hierarchical * 100))
+cat(sprintf("Hierarchical Accuracy (4 classes) : %.2f%%\n", accuracy_hierarchical * 100))
 
-# --- Overfitting Check (4 classes hiérarchique) ---
-# Prédiction sur le training avec la même logique hiérarchique
+# --- Overfitting Check (4 classes hierarchical) ---
+# Prediction on training using the same hierarchical logic
 pred_lvl1_train <- predict(lda_lvl1, train_df_lvl1[, -1])$class
 final_h_preds_train <- character(nrow(training_4c))
 for(i in 1:nrow(training_4c)) {
@@ -701,54 +701,70 @@ for(i in 1:nrow(training_4c)) {
 }
 acc_h_train <- mean(final_h_preds_train == training_4c$sentiment)
 
-cat("\n=== Overfitting Check (4 classes - Hiérarchique) ===\n")
+cat("\n=== Overfitting Check (4 classes - Hierarchical) ===\n")
 cat(sprintf("Training Accuracy   : %.2f%%\n", acc_h_train * 100))
 cat(sprintf("Validation Accuracy : %.2f%%\n", accuracy_hierarchical * 100))
-cat(sprintf("Écart (Gap)         : %.2f points\n", (acc_h_train - accuracy_hierarchical) * 100))
+cat(sprintf("Gap                 : %.2f points\n", (acc_h_train - accuracy_hierarchical) * 100))
 
-# Matrice de confusion Hiérarchique
-cat("\n=== Matrice de confusion (Hiérarchique) ===\n")
-table(Réel = validation_4c$sentiment, Prédit = final_h_preds)
+# Hierarchical Confusion Matrix
+cat("\n=== Confusion Matrix (Hierarchical) ===\n")
+table(Actual = validation_4c$sentiment, Predicted = final_h_preds)
 
-# --- Comparaison finale ---
+# --- Final Comparison ---
 comparison_df <- data.frame(
-  Approche = factor(c("2 classes", "3 classes", "4 classes (Direct)", "4 classes (Hiérarchique)"),
-                   levels = c("2 classes", "3 classes", "4 classes (Direct)", "4 classes (Hiérarchique)")),
+  Approach = factor(c("2 classes", "3 classes", "4 classes (Direct)", "4 classes (Hierarchical)"),
+                   levels = c("2 classes", "3 classes", "4 classes (Direct)", "4 classes (Hierarchical)")),
   Accuracy = c(accuracy_2_classes, accuracy_3_classes, accuracy_4_classes, accuracy_hierarchical) * 100
 )
 
-ggplot(comparison_df, aes(x = Approche, y = Accuracy, fill = Approche)) +
+ggplot(comparison_df, aes(x = Approach, y = Accuracy, fill = Approach)) +
   geom_bar(stat = "identity") +
   geom_text(aes(label = sprintf("%.1f%%", Accuracy)), vjust = -0.5) +
   theme_minimal() +
   theme(axis.text.x = element_text(angle = 45, hjust = 1)) +
-  labs(title = "Comparaison des Approches de Classification", 
-       subtitle = "Évaluation de la hiérarchie vs classification directe")
+  labs(title = "Classification Approaches Comparison", 
+       subtitle = "Evaluation of hierarchy vs direct classification")
 ```
 
 # Conclusion
 
-## Synthèse des Résultats
+## Results Synthesis
 
-Cette étude a permis d'explorer différentes approches pour l'analyse de sentiments sur Twitter en utilisant l'Analyse Factorielle Discriminante (AFD).
+This study explored several approaches for sentiment analysis on Twitter using Discriminant Factor Analysis (AFD).
 
-| Approche | Accuracy | Observation |
-|----------|----------|-------------|
-| **2 classes** (Pos/Neg) | ~83% | Baseline solide, séparation nette sur LD1 |
-| **3 classes** (Pos/Neg/Neutre) | ~65% | Difficulté à isoler les tweets neutres |
-| **4 classes directe** | ~55% | Confusion Neutre/Irrelevant importante |
-| **4 classes hiérarchique** | ~58-60% | Amélioration grâce au routage en 2 niveaux |
+```{r results-synthesis, echo=FALSE}
+# Dynamic comparison table (avoids hardcoded values)
+h_obs <- if (accuracy_hierarchical > accuracy_4_classes) {
+  "Improvement through two-level routing"
+} else {
+  "Routing errors at Level 1 offset Level 2 gains"
+}
 
-## Contributions Méthodologiques
+synthesis_df <- data.frame(
+  Approach = c("2 classes (Pos/Neg)", 
+               "3 classes (Pos/Neg/Neutral)", 
+               "4 classes (Direct)", 
+               "4 classes (Hierarchical)"),
+  Accuracy = sprintf("%.1f%%", c(accuracy_2_classes, accuracy_3_classes, 
+                                  accuracy_4_classes, accuracy_hierarchical) * 100),
+  Observation = c("Solid baseline, clean separation on LD1",
+                   "Difficulty in isolating neutral tweets",
+                   "Significant Neutral/Irrelevant confusion",
+                   h_obs)
+)
+knitr::kable(synthesis_df, align = "lcc")
+```
 
-1.  **Qualité des données** : Nous avons démontré l'importance du split par ID unique pour éviter la fuite de données causée par les paraphrases.
+## Methodological Contributions
 
-2.  **Word2Vec optimisé** : L'utilisation de bigrams et d'une dimensionnalité élevée (300) améliore la capture des nuances sémantiques.
+1.  **Data Quality**: We demonstrated the importance of unit ID splitting to avoid data leakage caused by paraphrasing.
 
-3.  **Classification hiérarchique** : Décomposer le problème en deux niveaux (Subjectif/Objectif puis sentiment fin) améliore la précision sur 4 classes.
+2.  **Optimized Word2Vec**: Utilizing bigrams and high dimensionality (500) improves the capture of semantic nuances.
 
-## Limites et Perspectives
+3.  **Hierarchical Classification**: Decomposing the problem into two levels (Subjective/Objective then fine sentiment) is an interesting strategy but does not guarantee improvement when Level 1 separation is difficult for linear models.
 
-- Les tweets très courts (< 5 mots) restent difficiles à classifier.
-- L'approche hiérarchique pourrait être améliorée avec des modèles plus complexes (SVM, Random Forest) au niveau 2.
-- L'intégration d'un LLM (comme Gemini) pour le nettoyage des labels améliore significativement la qualité des données d'entraînement.
+## Limitations & Perspectives
+
+- Extremely short tweets (< 5 words) remain difficult to classify.
+- The hierarchical approach could be improved with more complex models (SVM, Random Forest) at Level 2.
+- Integrating an LLM (such as Gemini) to clean labels significantly enhances training data quality.

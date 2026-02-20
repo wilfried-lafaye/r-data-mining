@@ -1,6 +1,6 @@
 ---
-title: "Classification bayésienne et Analyse Factorielle Discriminante"
-subtitle: "Projet Final : Détection de texte généré par l'IA (LLM-Detect)"
+title: "AI Text Detection"
+subtitle: "Final Project: Kaggle Challenge (LLM-Detect)"
 author: 
   - Wilfried LAFAYE
   - Marie BOUËTEL
@@ -90,39 +90,39 @@ knitr::opts_chunk$set(
 )
 ```
 
-# Préambule
+# Preamble
 
-Dans le cadre de ce projet final, nous abordons le défi de la distinction entre le texte généré par l'homme et celui produit par une intelligence artificielle (LLM). L'objectif est de développer un système de classification sophistiqué combinant l'Analyse Factorielle Discriminante (AFD) pour la réduction de dimensionnalité et des méthodes bayésiennes pour la classification.
+In the framework of this final project, we address the challenge of distinguishing between human-generated text and that produced by Artificial Intelligence (LLM). The goal is to develop a sophisticated classification system combining Discriminant Factor Analysis (DFA) for dimensionality reduction and Bayesian methods for classification.
 
-## Contexte de la détection de texte généré par l’IA
+## Context of AI-Generated Text Detection
 
-L’ensemble de données provient du projet "LLM-Detect" de Kaggle. La multiplication des modèles de langage de grande taille rend cruciale la capacité à identifier l'origine d'un texte, que ce soit pour des raisons académiques, journalistiques ou de sécurité.
+The dataset comes from the "LLM-Detect" project on Kaggle. The proliferation of Large Language Models makes the ability to identify the origin of a text crucial, whether for academic, journalistic, or security reasons.
 
-## Objectifs de l’utilisation de la classification bayésienne et de l’AFD
+## Objectives of Using Bayesian Classification and DFA
 
-1.  **Réduction de dimension** : Utiliser l'AFD pour extraire les facteurs les plus discriminants parmi les nombreuses caractéristiques linguistiques.
-2.  **Classification robuste** : Appliquer un classifieur bayésien (éventuellement avec des techniques avancées comme MCMC) sur l'espace réduit pour obtenir des prédictions probabilistes fiables.
+1.  **Dimensionalize Reduction**: Use DFA to extract the most discriminant factors among numerous linguistic features.
+2.  **Robust Classification**: Apply a Bayesian classifier (possibly with advanced techniques like MCMC) on the reduced space to obtain reliable probabilistic predictions.
 
-# Données et prétraitement
+# Data and Preprocessing
 
-## Chargement des Données
+## Loading Data
 
-Dans cette section, nous introduisons les données utilisées pour notre étude. Le défi de la détection de texte généré par IA pâtit d'un manque initial de données réelles. Pour pallier cela, plusieurs versions de datasets enrichis ont été proposées par la communauté. Nous chargeons ici les différentes versions disponibles pour illustrer leur évolution.
+In this section, we introduce the data used for our study. The challenge of AI-generated text detection suffers from an initial lack of real data. To mitigate this, several versions of enriched datasets have been proposed by the community. We load different available versions here to illustrate their evolution.
 
 ```{r load-datasets}
-# Librairies nécessaires
+# Necessary libraries
 library(tidyverse)
 library(knitr)
 library(kableExtra)
 
-# Chemins des fichiers
+# File paths
 path_raw <- "../datasets/llm-detect-ai-generated-text/train_essays.csv"
 paths_drcat <- paste0("../datasets/train_drcat_0", 1:4, ".csv")
 
-# Fonction pour obtenir les statistiques d'un dataset
+# Function to get dataset statistics
 get_stats <- function(path, version_name) {
   df <- read.csv(path)
-  # Gestion des noms de colonnes différents entre le raw et drcat
+  # Handling different column names between raw and drcat
   label_col <- if("generated" %in% names(df)) "generated" else "label"
   source_col <- if("source" %in% names(df)) "source" else NULL
   
@@ -130,14 +130,14 @@ get_stats <- function(path, version_name) {
   
   data.frame(
     Version = version_name,
-    Lignes_totales = nrow(df),
-    Textes_Humains = sum(df[[label_col]] == 0),
-    Textes_IA = sum(df[[label_col]] == 1),
-    Nombre_de_sources = as.character(nombre_sources_val)
+    Total_Rows = nrow(df),
+    Human_Texts = sum(df[[label_col]] == 0),
+    AI_Texts = sum(df[[label_col]] == 1),
+    Number_of_sources = as.character(nombre_sources_val)
   )
 }
 
-# Compilation des statistiques
+# Statistics compilation
 stats_list <- list()
 stats_list[[1]] <- get_stats(path_raw, "Original (Kaggle)")
 for(i in 1:4) {
@@ -146,37 +146,37 @@ for(i in 1:4) {
 
 comparison_table <- bind_rows(stats_list)
 
-# Affichage du tableau comparatif
-kable(comparison_table, col.names = c("Version", "Lignes totales", "Textes Humains (0)", "Textes IA (1)", "Nombre de sources"), 
-      caption = "Évolution et comparaison des datasets disponibles") %>%
+# Display comparative table
+kable(comparison_table, col.names = c("Version", "Total rows", "Human Texts (0)", "AI Texts (1)", "Number of sources"), 
+      caption = "Evolution and comparison of available datasets") %>%
   kable_styling(bootstrap_options = c("striped", "hover", "condensed"))
 ```
 
-Comme nous pouvons le constater, le dataset original est extrêmement déséquilibré (seulement 3 exemples d'IA). Les versions `train_drcat` augmentent progressivement la diversité et la quantité de textes générés par IA. Nous utiliserons la version **v04** pour le reste de notre étude car elle offre la meilleure représentativité.
+As we can see, the original dataset is extremely unbalanced (only 3 AI examples). The `train_drcat` versions progressively increase the diversity and quantity of AI-generated texts. We will use version **v04** for the rest of our study as it offers the best representativeness.
 
-## Analyse exploratoire et nettoyage
+## Exploratory Analysis and Cleaning
 
-Nous nous concentrons maintenant sur le dataset sélectionné (**v04**). Commençons par examiner sa structure interne et les premières lignes de données.
+We now focus on the selected dataset (**v04**). Let's start by examining its internal structure and the first few rows of data.
 
 ```{r load-v04}
-# Chargement du dataset final pour l'analyse
+# Loading the final dataset for analysis
 train_data <- read.csv("../datasets/train_drcat_04.csv")
 
-# NOTE : Sur une machine avec 32 Go de RAM, on utilise le dataset complet.
-# Pas de sous-échantillonnage nécessaire.
+# NOTE: On a machine with 32 GB of RAM, we use the complete dataset.
+# No downsampling necessary.
 ```
 
-### Structure du Dataset (v04)
+### Dataset Structure (v04)
 
-Le dataset est composé des colonnes suivantes :
+The dataset is composed of the following columns:
 
 ```{r structure-check}
-# Apercu de la structure technique (table lisible)
+# Overview of the technical structure (readable table)
 structure_tbl <- tibble::tibble(
-  Colonne = names(train_data),
+  Column = names(train_data),
   Type = vapply(train_data, function(x) class(x)[1], character(1)),
-  Valeurs_manquantes = vapply(train_data, function(x) sum(is.na(x)), integer(1)),
-  Exemple = vapply(train_data, function(x) {
+  Missing_Values = vapply(train_data, function(x) sum(is.na(x)), integer(1)),
+  Example = vapply(train_data, function(x) {
     val <- x[which(!is.na(x))[1]]
     if (is.null(val)) NA_character_ else as.character(val)
   }, character(1))
@@ -184,136 +184,136 @@ structure_tbl <- tibble::tibble(
 
 structure_tbl %>%
   kable(
-    caption = "Structure du dataset (types et valeurs manquantes)",
+    caption = "Dataset structure (types and missing values)",
     align = "l"
   ) %>%
   kable_styling(bootstrap_options = c("striped", "hover", "condensed"))
 
 ```
 
-Le détail des colonnes est le suivant :
+The column details are as follows:
 
-*   **`essay_id`** : Identifiant unique pour chaque essai textuel.
-*   **`text`** : Le contenu intégral du texte (Humain ou IA).
-*   **`label`** : La variable cible (0 = Humain, 1 = IA).
-*   **`source`** : L'origine du texte (modèle de langage spécifique ou dataset source).
-*   **`prompt`** : Le sujet ou la consigne utilisé pour la génération.
-*   **`fold`** : Variable pour la validation croisée.
+*   **`essay_id`**: Unique identifier for each textual essay.
+*   **`text`**: The full content of the text (Human or AI).
+*   **`label`**: The target variable (0 = Human, 1 = AI).
+*   **`source`**: The origin of the text (specific language model or source dataset).
+*   **`prompt`**: The subject or instruction used for generation.
+*   **`fold`**: Variable for cross-validation.
 
-Ce dataset présente un équilibre sain (29 792 humains vs 14 414 IA), ce qui permettra d'entraîner notre classifieur bayésien de manière robuste sans qu'il ne favorise systématiquement la classe majoritaire.
+This dataset presents a healthy balance (29,792 humans vs 14,414 AI), which will allow us to train our Bayesian classifier robustly without systematically favoring the majority class.
 
-### Vérification de la Qualité
+### Quality Verification
 
-Avant de procéder au nettoyage, nous effectuons une vérification de la qualité des données (Data Quality Check) pour identifier d'éventuels biais ou erreurs.
+Before proceeding with cleaning, we perform a Data Quality Check to identify potential biases or errors.
 
 ```{r quality-check}
-# 1. Vérification des valeurs manquantes
+# 1. Verification of missing values
 colSums(is.na(train_data))
 
-# 2. Vérification des doublons textuels
+# 2. Verification of textual duplicates
 n_text_dups <- sum(duplicated(train_data$text))
-cat("Nombre de doublons textuels exacts :", n_text_dups, "\n")
+cat("Number of exact textual duplicates:", n_text_dups, "\n")
 
-# 3. Analyse des IDs uniques
+# 3. Analysis of unique IDs
 n_unique_ids <- n_distinct(train_data$essay_id)
-cat("Nombre d'essays IDs uniques :", n_unique_ids, " sur ", nrow(train_data), " lignes.\n")
+cat("Number of unique essay IDs:", n_unique_ids, " out of ", nrow(train_data), " rows.\n")
 ```
 
-**Observations sur la qualité :**
+**Quality observations:**
 
-1.  **Fiabilité** : L'analyse montre qu'il n'y a **aucune valeur manquante** dans les colonnes critiques (`text`, `label`). Seule la colonne `prompt` est partiellement renseignée (31 295 NA), ce qui est normal compte tenu de la diversité des sources.
-2.  **Doublons** : Nous identifions **`r n_text_dups` doublons textuels exacts**. Bien que ce taux soit extrêmement faible (<0.2%), ces lignes seront supprimées lors du nettoyage pour garantir la rigueur statistique.
-3.  **Cohérence** : Les labels sont **100% cohérents**. Il n'existe aucun cas où un texte identique est attribué à la fois à un humain et à une IA, ce qui atteste de la propreté du dataset source.
-4.  **Alerte Data Leakage** : Le point de vigilance majeur réside dans l'unicité des IDs. Avec **`r n_unique_ids` IDs uniques** pour `r nrow(train_data)` lignes, il est clair que certains essais sources ont été utilisés pour générer plusieurs variantes via différents LLMs. 
-    *   *Conséquence* : Lors de la phase d'évaluation, nous devrons effectuer un split Train/Test basé sur les `essay_id` et non sur les lignes individuelles, afin d'éviter que le modèle ne "mémorise" des variantes d'un texte qu'il aurait déjà vu dans l'ensemble d'entraînement.
+1.  **Reliability**: The analysis shows that there are **no missing values** in critical columns (`text`, `label`). Only the `prompt` column is partially filled (31,295 NA), which is normal given the diversity of sources.
+2.  **Duplicates**: We identify **`r n_text_dups` exact textual duplicates**. Although this rate is extremely low (<0.2%), these rows will be removed during cleaning to ensure statistical rigor.
+3.  **Consistency**: The labels are **100% consistent**. There are no cases where an identical text is assigned to both a human and an AI, attesting to the cleanliness of the source dataset.
+4.  **Data Leakage Alert**: The major point of vigilance lies in the uniqueness of the IDs. With **`r n_unique_ids` unique IDs** for `r nrow(train_data)` rows, it's clear that some source essays were used to generate several variants via different LLMs. 
+    *   *Consequence*: During the evaluation phase, we must perform a Train/Test split based on `essay_id` and not on individual rows, to prevent the model from "memorizing" variants of a text it has already seen in the training set.
 
-## Nettoyage des Textes
+## Text Cleaning
 
-Pour garantir la qualité de notre modèle, nous commençons par supprimer les doublons textuels identifiés précédemment, puis nous appliquons une série de transformations pour normaliser le texte.
+To guarantee the quality of our model, we begin by removing the previously identified textual duplicates, then apply a series of transformations to normalize the text.
 
 ```{r cleaning}
-# 1. Suppression des doublons textuels
+# 1. Removal of textual duplicates
 train_data <- train_data[!duplicated(train_data$text), ]
 
-# 2. Nettoyage et normalisation
-# Nous utilisons la bibliothèque 'tm' pour les transformations de base
+# 2. Cleaning and normalization
+# We use the 'tm' library for basic transformations
 library(tm)
 
 clean_text <- function(text_vector) {
-  # Conversion en corpus pour faciliter les transformations 'tm'
+  # Transformation to corpus to facilitate 'tm' transformations
   corpus <- VCorpus(VectorSource(text_vector))
   
   corpus <- corpus %>%
-    tm_map(content_transformer(tolower)) %>%           # Passage en minuscules
-    tm_map(removePunctuation) %>%                      # Suppression de la ponctuation
-    tm_map(removeNumbers) %>%                          # Suppression des chiffres
-    tm_map(removeWords, stopwords("english")) %>%      # Suppression des mots outils anglais
-    tm_map(stripWhitespace)                            # Suppression des espaces superflus
+    tm_map(content_transformer(tolower)) %>%           # Lowercase
+    tm_map(removePunctuation) %>%                      # Punctuation removal
+    tm_map(removeNumbers) %>%                          # Numbers removal
+    tm_map(removeWords, stopwords("english")) %>%      # English stopword removal
+    tm_map(stripWhitespace)                            # Whitespace removal
     
   return(sapply(corpus, content_transformer(identity)))
 }
 
-# Note : Le nettoyage peut être long sur 44k lignes. 
-# Pour cette démonstration, nous montrons la logique.
-# Dans une approche réelle, on paralléliserait ou utiliserait 'quanteda' pour la performance.
+# Note: Cleaning can be long for 44k rows.
+# For this demonstration, we show the logic.
+# In a real approach, we would parallelize or use 'quanteda' for performance.
 
-cat("Nombre de lignes :", nrow(train_data), "\n")
-cat("Équilibre - Textes Humains (0) :", sum(train_data$label == 0), "\n")
-cat("Équilibre - Textes IA (1) :", sum(train_data$label == 1), "\n")
+cat("Number of rows:", nrow(train_data), "\n")
+cat("Balance - Human Texts (0):", sum(train_data$label == 0), "\n")
+cat("Balance - AI Texts (1):", sum(train_data$label == 1), "\n")
 ```
 
-## Extraction de caractéristiques (Feature Extraction)
+## Feature Extraction
 
-Conformément aux recommandations issues de nos recherches (voir `models.md`), nous utilisons une vectorisation TF-IDF optimisée.
+According to the recommendations from our research (see `models.md`), we use an optimized TF-IDF vectorization.
 
-### Vectorisation TF-IDF
+### TF-IDF Vectorization
 
-Nous utilisons des n-grammes de taille 3 à 5 et un seuil de fréquence minimale (`min_df = 2`) pour capturer les motifs stylistiques complexes qui trahissent souvent l'usage d'un LLM.
+We use n-grams of size 3 to 5 and a minimum frequency threshold (`min_df = 2`) to capture complex stylistic patterns that often betray the use of an LLM.
 
 ```{r tf-idf}
 library(quanteda)
 
-# Création d'un corpus quanteda (plus performant pour les n-grammes)
+# Creating a quanteda corpus (more performant for n-grams)
 corp <- corpus(train_data, text_field = "text")
-# Création de la matrice de documents (DFM) avec n-grammes 3 à 5
-# Note : Cette étape est gourmande en mémoire mais possible avec 32 Go de RAM.
+# Creating the Document-Feature Matrix (DFM) with n-grams 3 to 5
+# Note: This step is memory-intensive but possible with 32 GB of RAM.
 
 toks <- tokens(corp, remove_punct = TRUE, remove_numbers = TRUE) %>%
   tokens_ngrams(n = 3:5)
 dfm_train <- dfm(toks) %>% dfm_trim(min_termfreq = 25)
 
-# Affichage des résultats de la vectorisation
+# Display vectorization results
 dfm_density <- Matrix::nnzero(dfm_train) / (as.numeric(ndoc(dfm_train)) * as.numeric(nfeat(dfm_train)))
-cat("Densité de la matrice :", round(dfm_density * 100, 4), "%\n")
+cat("Matrix density:", round(dfm_density * 100, 4), "%\n")
 
 ```
 
-La matrice DFM (Document-Feature Matrix) crée une représentation vectorielle où chaque ligne est un texte et chaque colonne représente un n-gramme (séquence de 3, 4 ou 5 mots). Les cellules contiennent le nombre d'occurrences de chaque n-gramme dans le texte. 
-Cette matrice est très **creuse** (sparse) car la plupart des textes ne contiennent pas tous les n-grammes possibles. Cette représentation permet aux modèles d'apprentissage machine de capturer les motifs stylistiques qui différencient les textes humains des textes générés par IA.
+The DFM (Document-Feature Matrix) creates a vector representation where each row is a text and each column represents an n-gram (sequence of 3, 4, or 5 words). The cells contain the number of occurrences of each n-gram in the text.
+This matrix is very **sparse** because most texts do not contain all possible n-grams. This representation allows machine learning models to capture the stylistic patterns that differentiate human texts from AI-generated texts.
 
-# Méthodologie et protocole expérimental
+# Methodology and Experimental Protocol
 
-## Protocole de Validation
+## Validation Protocol
 
-Pour évaluer nos modèles de manière rigoureuse et éviter le "Data Leakage" identifié lors de l'analyse qualité (plusieurs lignes pour un même `essay_id`), nous effectuons un découpage Train/Test basé sur les identifiants d'essais et non sur les lignes.
+To evaluate our models rigorously and avoid the "Data Leakage" identified during the quality analysis (multiple rows for the same `essay_id`), we perform a Train/Test split based on essay identifiers and not on rows.
 
 ```{r splitting}
 set.seed(123)
 library(caret)
 
-# 1. Création du Split (80% Train, 20% Test) basé sur essay_id unique
+# 1. Split Creation (80% Train, 20% Test) based on unique essay_id
 unique_ids <- unique(train_data$essay_id)
 train_ids <- sample(unique_ids, length(unique_ids) * 0.8)
 
-# 2. Séparation du dataframe
+# 2. Dataframe separation
 df_train <- train_data[train_data$essay_id %in% train_ids, ]
 df_test <- train_data[!train_data$essay_id %in% train_ids, ]
 
-# 3. Préparation des matrices TF-IDF (DFM)
+# 3. TF-IDF Matrix Preparation (DFM)
 corp_train <- corpus(df_train, text_field = "text")
 corp_test <- corpus(df_test, text_field = "text")
 
-# Tokenisation complète (n-grams 3 à 5) pour machine 32 Go RAM
+# Full tokenization (n-grams 3 to 5) for machine with 32 GB RAM
 toks_train <- tokens(corp_train, remove_punct = TRUE, remove_numbers = TRUE) %>% 
   tokens_ngrams(n = 3:5)
 
@@ -325,7 +325,7 @@ dfm_test <- tokens(corp_test, remove_punct = TRUE, remove_numbers = TRUE) %>%
   dfm() %>% 
   dfm_match(featnames(dfm_train))
 
-# Conversion pour compatibilité avec les modèles (NaiveBayes, LiblineaR)
+# Conversion for model compatibility (NaiveBayes, LiblineaR)
 library(Matrix)
 train_matrix <- as(dfm_train, "dgCMatrix")
 test_matrix <- as(dfm_test, "dgCMatrix")
@@ -335,37 +335,37 @@ y_train <- as.factor(df_train$label)
 y_test <- as.factor(df_test$label)
 ```
 
-### Résumé du Split Train/Test
+### Train/Test Split Summary
 
 ```{r split-summary}
-cat("Dimensions TF-IDF TRAIN :", nrow(dfm_train), "documents ×", ncol(dfm_train), "features\n")
-cat("Dimensions TF-IDF TEST :", nrow(dfm_test), "documents ×", ncol(dfm_test), "features\n")
+cat("Dimensions TF-IDF TRAIN:", nrow(dfm_train), "documents ×", ncol(dfm_train), "features\n")
+cat("Dimensions TF-IDF TEST:", nrow(dfm_test), "documents ×", ncol(dfm_test), "features\n")
 ```
 
-A noter que le split est basé sur les `essay_id` (pas les lignes) pour éviter la fuite de données. Chaque essai source est affecté à une seule partition (Train ou Test), prévenant ainsi que le modèle ne soit entraîné sur des variantes du même texte qu'il doit tester.
+Note that the split is based on `essay_id` (not rows) to prevent data leakage. Each source essay is assigned to only one partition (Train or Test), preventing the model from being trained on variants of the same text it must test.
 
-Avant l'entraînement, nous explicitons le cadre AFD choisi car il conditionne la réduction de dimension utilisée par le classifieur.
+Before training, we specify the chosen DFA framework because it conditions the dimensionality reduction used by the classifier.
 
-## Analyse des facteurs discriminants (AFD)
+## Discriminant Factor Analysis (DFA)
 
-L'AFD (ou Linear Discriminant Analysis - LDA) cherche à projeter les données sur un sous-espace qui maximise la séparation entre les classes. Cependant, elle est inapte à traiter directement nos données de haute dimension (vocabulaire > nombre d'observations, colinéarité).
+DFA (or Linear Discriminant Analysis - LDA) seeks to project the data onto a subspace that maximizes the separation between classes. However, it is unable to handle our high-dimensional data directly (vocabulary > number of observations, collinearity).
 
-## Approche Hybride : LSA + AFD
+## Hybrid Approach: LSA + DFA
 
-Pour contourner ce problème, nous adoptons une stratégie en deux temps :
+To circumvent this problem, we adopt a two-step strategy:
 
-1.  **Réduction de dimension non-supervisée (LSA)** : Nous utilisons une Décomposition en Valeurs Singulières (SVD) pour réduire la matrice TF-IDF creuse à 50 dimensions latentes denses.
+1.  **Unsupervised Dimensionality Reduction (LSA)**: We use Selective Value Decomposition (SVD) to reduce the sparse TF-IDF matrix to 50 dense latent dimensions.
 
-2.  **Classification supervisée (AFD)** : Nous appliquons l'AFD sur ces 50 composantes pour trouver l'axe discriminant optimal.
+2.  **Supervised Classification (DFA)**: We apply DFA on these 50 components to find the optimal discriminant axis.
 
-Cette approche permet de visualiser les données dans l'espace discriminant et d'obtenir un classifieur linéaire performant.
+This approach allows us to visualize the data in the discriminant space and obtain a high-performance linear classifier.
 
-### Entraînement des modèles
+### Model Training
 
-Nous entraînons maintenant les deux modèles principaux sur l'ensemble d'entraînement et générons des prédictions sur le jeu de test.
+We now train the two main models on the training set and generate predictions on the test set.
 
 ```{r training-evaluation}
-# Librairie pour le Naive Bayes multinomial
+# Library for multinomial Naive Bayes
 library(naivebayes)
 
 # --- 1. Naive Bayes ---
@@ -374,66 +374,66 @@ pred_nb_class <- predict(model_nb, newdata = test_matrix)
 pred_nb_prob <- predict(model_nb, newdata = test_matrix, type = "prob")[, "1"]
 cm_nb <- confusionMatrix(pred_nb_class, y_test, mode = "prec_recall")
 
-# --- 2b. AFD (LSA + LDA) ---
+# --- 2b. DFA (LSA + LDA) ---
 library(irlba)
 library(MASS)
 
-# 1. SVD sur la matrice d'entraînement (SPARSE)
-# On convertit explicitement en dgCMatrix au cas où
+# 1. SVD on training matrix (SPARSE)
+# Explicit conversion to dgCMatrix just in case
 train_matrix_sparse <- as(dfm_train, "dgCMatrix")
-# SVD tronquée à 50 dimensions
+# Truncated SVD at 50 dimensions
 svd_model <- irlba(train_matrix_sparse, nv = 50)
 
-# Projection Train
+# Train Projection
 lsa_train <- as.data.frame(as.matrix(svd_model$u %*% diag(svd_model$d)))
-# IMPORTANT: s'assurer que l'ordre des lignes est respecté (normalement oui avec irlba sur matrice input)
+# IMPORTANT: ensure row order is respected (usually yes with irlba on input matrix)
 lsa_train$label <- y_train 
 
-# 2. Entraînement LDA
+# 2. LDA Training
 model_afd <- lda(label ~ ., data = lsa_train)
 
-# 3. Projection Test
+# 3. Test Projection
 test_matrix_sparse <- as(dfm_test, "dgCMatrix")
-# Projection: Test_LSA = Test_Matrix * V 
-# Note: irlba renvoie V (right singular vectors). 
-# La projection correcte dans l'espace des documents est T * V.
+# Projection: Test_LSA = Test_Matrix * V
+# Note: irlba returns V (right singular vectors).
+# The correct projection in the document space is T * V.
 lsa_test <- as.data.frame(as.matrix(test_matrix_sparse %*% svd_model$v))
 
-# 4. Prédiction
+# 4. Prediction
 pred_afd <- predict(model_afd, newdata = lsa_test)
 pred_afd_class <- pred_afd$class
 pred_afd_prob <- pred_afd$posterior[, "1"]
 
 cm_afd <- confusionMatrix(pred_afd_class, y_test, mode = "prec_recall")
 
-# 5. Visualisation de l'axe discriminant (LD1)
-# On récupère les scores du premier axe (LD1) pour le jeu de test
+# 5. Visualization of the discriminant axis (LD1)
+# Recover scores from the first axis (LD1) for the test set
 ld_scores <- as.data.frame(pred_afd$x)
 ld_scores$label <- y_test
 
 ggplot(ld_scores, aes(x = LD1, fill = label)) +
   geom_density(alpha = 0.5) +
-  scale_fill_manual(values = c("#18bc9c", "#e74c3c"), labels = c("Humain", "IA")) +
-  labs(title = "Distribution du Premier Axe Discriminant (AFD)",
-       subtitle = "Séparation des classes dans l'espace réduit LSA",
-       x = "Score de l'axe LD1", y = "Densité", fill = "Classe") +
+  scale_fill_manual(values = c("#18bc9c", "#e74c3c"), labels = c("Human", "AI")) +
+  labs(title = "Distribution of the First Discriminant Axis (DFA)",
+       subtitle = "Class separation in reduced LSA space",
+       x = "LD1 axis score", y = "Density", fill = "Class") +
   theme_minimal()
 
 ```
 
-La projection des données test sur le premier axe discriminant (LD1), obtenu après réduction LSA (50 dimensions) puis application de l’AFD, montre une différenciation globale entre les textes humains et les textes générés par l’IA. Les scores négatifs sont majoritairement associés aux textes humains tandis que les scores positifs correspondent aux textes IA. 
-Un chevauchement persiste autour de la zone centrale indiquant que la séparation n’est pas parfaitement linéaire mais reste significative. 
+The projection of the test data on the first discriminant axis (LD1), obtained after LSA reduction (50 dimensions) then application of the DFA, shows a global differentiation between human texts and AI-generated texts. Negative scores are mostly associated with human texts while positive scores correspond to AI texts.
+An overlap persists around the central zone indicating that the separation is not perfectly linear but remains significant.
 
-# Résultats et évaluation
+# Results and Evaluation
 
-## Performances comparatives
+## Comparative Performance
 
-Comparaison des performances des modèles testés incluant l'approche "Ensemble".
+Comparison of the tested models' performance including the "Ensemble" approach.
 
 ```{r metrics}
 extract_metrics <- function(cm, model_name) {
   data.frame(
-    Modele = model_name,
+    Model = model_name,
     Accuracy = cm$overall["Accuracy"],
     Precision = cm$byClass["Precision"],
     Recall = cm$byClass["Recall"],
@@ -442,73 +442,72 @@ extract_metrics <- function(cm, model_name) {
 }
 
 metrics_nb <- extract_metrics(cm_nb, "Naive Bayes")
-metrics_afd <- extract_metrics(cm_afd, "AFD (sur LSA 50 dim)")
+metrics_afd <- extract_metrics(cm_afd, "DFA (on LSA 50 dim)")
 metrics_all <- rbind(metrics_nb, metrics_afd)
 
-kable(metrics_all, digits = 4, caption = "Performances comparées sur le jeu de test") %>%
+kable(metrics_all, digits = 4, caption = "Compared performance on the test set") %>%
   kable_styling(bootstrap_options = c("striped", "hover"), full_width = F)
 ```
 
-### Interprétation des métriques
+### Interpretation of Metrics
 
-- **Accuracy** : Proportion globale de prédictions correctes (TP+TN)/(TP+TN+FP+FN)
-- **Precision** : Parmi les textes classés comme "IA", quelle proportion l'est réellement ? TP/(TP+FP)
-- **Recall** : Parmi tous les textes "IA" du dataset, quelle proportion a été correctement détectée ? TP/(TP+FN)
-- **F1-Score** : Moyenne harmonique entre Precision et Recall (synthèse équilibrée)
+- **Accuracy**: Overall proportion of correct predictions (TP+TN)/(TP+TN+FP+FN)
+- **Precision**: Among the texts classified as "AI", what proportion actually is? TP/(TP+FP)
+- **Recall**: Among all the "AI" texts in the dataset, what proportion was correctly detected? TP/(TP+FN)
+- **F1-Score**: Harmonic mean between Precision and Recall (balanced synthesis)
 
-Dans un contexte de détection de texte généré par IA, un rappel élevé est particulièrement important afin de limiter les faux négatifs (textes IA non détectés). Le compromis observé ici montre que la réduction de dimension via LSA + AFD simplifie l’espace des données mais entraîne une légère perte d’information discriminante par rapport au modèle Naive Bayes appliqué directement aux représentations complètes.
+In a context of AI-generated text detection, high recall is particularly important to limit false negatives (undetected AI texts). The compromise observed here shows that dimensionality reduction via LSA + DFA simplifies the data space but entails a slight loss of discriminant information compared to the Naive Bayes model applied directly to full representations.
 
-## Matrices de Confusion
+## Confusion Matrices
 
-#### Modèle Naive Bayes
+#### Naive Bayes Model
 
 ```{r cm-nb-visual}
-# Affichage de la matrice de confusion Naive Bayes
+# Display Naive Bayes confusion matrix
 kable(
   cm_nb$table,
-  caption = "Matrice de Confusion - Naive Bayes",
+  caption = "Confusion Matrix - Naive Bayes",
   align = "c"
 ) %>%
   kable_styling(bootstrap_options = c("striped", "hover"), full_width = F)
 
-cat("Vrais Positifs (IA correctement détectés) :", cm_nb$table[2,2], "\n")
-cat("Faux Positifs (Humain classé IA) :", cm_nb$table[1,2], "\n")
-cat("Vrais Négatifs (Humain correctement détectés) :", cm_nb$table[1,1], "\n")
-cat("Faux Négatifs (IA classée humain) :", cm_nb$table[2,1], "\n")
+cat("True Positives (AI correctly detected):", cm_nb$table[2,2], "\n")
+cat("False Positives (Human classified as AI):", cm_nb$table[1,2], "\n")
+cat("True Negatives (Human correctly detected):", cm_nb$table[1,1], "\n")
+cat("False Negatives (AI classified as human):", cm_nb$table[2,1], "\n")
 ```
 
-Le modèle Naive Bayes présente d’excellentes performances avec seulement 75 faux positifs et 32 faux négatifs ce qui traduit une capacité très élevée à distinguer les textes humains des textes générés par l’IA avec très peu d’erreurs de classification.
+The Naive Bayes model presents excellent performance with only 75 false positives and 32 false negatives, reflecting a very high ability to distinguish human texts from AI-generated texts with very few classification errors.
 
-#### Modèle AFD (LSA + LDA)
+#### DFA Model (LSA + LDA)
 
 ```{r cm-afd-visual}
-# Affichage de la matrice de confusion AFD
+# Display DFA confusion matrix
 kable(
   cm_afd$table,
-  caption = "Matrice de Confusion - AFD (LSA 50 dim)",
+  caption = "Confusion Matrix - DFA (LSA 50 dim)",
   align = "c"
 ) %>%
   kable_styling(bootstrap_options = c("striped", "hover"), full_width = F)
 
-cat("Vrais Positifs (IA correctement détectés) :", cm_afd$table[2,2], "\n")
-cat("Faux Positifs (Humain classé IA) :", cm_afd$table[1,2], "\n")
-cat("Vrais Négatifs (Humain correctement détectés) :", cm_afd$table[1,1], "\n")
-cat("Faux Négatifs (IA classée Humain) :", cm_afd$table[2,1], "\n")
+cat("True Positives (AI correctly detected):", cm_afd$table[2,2], "\n")
+cat("False Positives (Human classified as AI):", cm_afd$table[1,2], "\n")
+cat("True Negatives (Human correctly detected):", cm_afd$table[1,1], "\n")
+cat("False Negatives (AI classified as Human):", cm_afd$table[2,1], "\n")
 ```
 
-Le modèle basé sur l’AFD après réduction LSA commet davantage d’erreurs, avec un nombre important de faux positifs (797), indiquant une tendance à sur-détecter les textes IA malgré que le nombre de faux négatifs reste relativement limité (66). 
+The model based on DFA after LSA reduction commits more errors, with a significant number of false positives (797), indicating a tendency to over-detect AI texts although the number of false negatives remains relatively limited (66).
 
-
-## Résumé comparatif
+## Comparative Summary
 ```{r summary-table}
 
-comparaison <- data.frame(
+comparison <- data.frame(
   Aspect = c(
-    "Vrais positifs (IA détectés)",
-    "Vrais négatifs (humain détectés)",
-    "Taux de détection (recall)",
-    "Confiance (precision)",
-    "Équilibre global (F1)"
+    "True positives (AI detected)",
+    "True negatives (human detected)",
+    "Detection rate (recall)",
+    "Confidence (precision)",
+    "Overall balance (F1)"
   ),
   NaiveBayes = c(
     cm_nb$table[2,2],
@@ -517,7 +516,7 @@ comparaison <- data.frame(
     round(cm_nb$byClass["Precision"], 3),
     round(cm_nb$byClass["F1"], 3)
   ),
-  AFD_LSA = c(
+  DFA_LSA = c(
     cm_afd$table[2,2],
     cm_afd$table[1,1],
     round(cm_afd$byClass["Recall"], 3),
@@ -526,19 +525,19 @@ comparaison <- data.frame(
   )
 )
 
-kable(comparaison, caption = "Synthèse des prédictions par modèle") %>%
+kable(comparison, caption = "Synthesis of predictions by model") %>%
   kable_styling(bootstrap_options = c("striped", "hover"), full_width = F)
   
 ```
-Globalement, le modèle Naive Bayes surpasse l’approche basée sur l’AFD après réduction LSA. Il présente un très faible nombre d’erreurs sur les faux positifs et les faux négatifs, montrant une excellente capacité de discrimination entre textes humains et textes générés par l’IA. 
+Overall, the Naive Bayes model outperforms the DFA-based approach after LSA reduction. It presents a very low number of errors on false positives and false negatives, showing an excellent capacity for discrimination between human texts and AI-generated texts.
 
-A l'inverse l'AFD présente un nombre plus élevé de faux positifs ce qui indique une séparation moins précise des classes sûrement due à une perte d’information induite par la réduction dimensionnelle. 
+In contrast, DFA presents a higher number of false positives indicating a less precise separation of classes probably due to a loss of information induced by dimensionality reduction.
 
-Ces résultats suggèrent donc que la représentation complète exploitée par le modèle bayésien est plus adaptée que l’espace réduit issu de la combinaison LSA + LDA.
+These results therefore suggest that the full representation exploited by the Bayesian model is more suitable than the reduced space resulting from the LSA + LDA combination.
 
-## Courbes ROC et analyse probabiliste
+## ROC Curves and Probabilistic Analysis
 
-Comparaison des courbes ROC et analyse des seuils de décision.
+Comparison of ROC curves and analysis of decision thresholds.
 
 ```{r roc-plot}
 if (!require("pROC")) install.packages("pROC")
@@ -548,53 +547,52 @@ roc_nb <- roc(y_test, pred_nb_prob)
 roc_afd <- roc(y_test, pred_afd_prob)
 
 
-plot(roc_nb, col = "#18bc9c", lwd = 2, main = "Comparaison des Courbes ROC (NB vs AFD)")
+plot(roc_nb, col = "#18bc9c", lwd = 2, main = "ROC Curve Comparison (NB vs DFA)")
 plot(roc_afd, col = "#3498db", lwd = 2, add = TRUE)
 
 
 legend("bottomright", legend = c(
     paste("Naive Bayes (AUC =", round(auc(roc_nb), 3), ")"),
-    paste("AFD (AUC =", round(auc(roc_afd), 3), ")")
+    paste("DFA (AUC =", round(auc(roc_afd), 3), ")")
   ), col = c("#18bc9c", "#3498db"), lwd = 2)
 ```
 
-### Analyse AUC-ROC
+### AUC-ROC Analysis
 
-L'**AUC (Area Under the Curve)** mesure la probabilité qu'un texte IA soit classé avec une probabilité plus élevée qu'un texte humain, indépendamment du seuil de décision. 
+The **AUC (Area Under the Curve)** measures the probability that an AI text is classified with a higher probability than a human text, independently of the decision threshold.
 
-- **AUC = 1.0** : Discrimination parfaite
-- **AUC = 0.5** : Pas mieux qu'un tirage aléatoire
-- **AUC > 0.7** : Bon modèle
-- **AUC > 0.8** : Modèle très bon
+- **AUC = 1.0**: Perfect discrimination
+- **AUC = 0.5**: No better than random
+- **AUC > 0.7**: Good model
+- **AUC > 0.8**: Very good model
 
 ```{r auc-comparison}
-# Tableau comparatif des AUC
+# Comparative table of AUCs
 auc_table <- data.frame(
-  Modele = c("Naive Bayes", "AFD (LSA 50 dim)"),
+  Model = c("Naive Bayes", "DFA (LSA 50 dim)"),
   AUC = c(round(auc(roc_nb), 4), round(auc(roc_afd), 4)),
   Interpretation = c(
-    ifelse(auc(roc_nb) > 0.8, "Très bon", ifelse(auc(roc_nb) > 0.7, "Bon", "Moyen")),
-    ifelse(auc(roc_afd) > 0.8, "Très bon", ifelse(auc(roc_afd) > 0.7, "Bon", "Moyen"))
+    ifelse(auc(roc_nb) > 0.8, "Very good", ifelse(auc(roc_nb) > 0.7, "Good", "Medium")),
+    ifelse(auc(roc_afd) > 0.8, "Very good", ifelse(auc(roc_afd) > 0.7, "Good", "Medium"))
   )
 )
 
-kable(auc_table, caption = "Comparaison des AUC-ROC", digits = 4) %>%
+kable(auc_table, caption = "Comparison of AUC-ROCs", digits = 4) %>%
   kable_styling(bootstrap_options = c("striped", "hover"), full_width = F)
 ```
 
-L’analyse ROC confirme cette tendance : les deux modèles discriminent très bien mais Naive Bayes conserve un avantage stable quel que soit le seuil de décision. 
+The ROC analysis confirms this trend: both models discriminate very well, but Naive Bayes maintains a table advantage regardless of the decision threshold.
 
+# Conclusion
 
-# Conclusion 
+The overall results show that the approach based on n-grams and the Naive Bayes classifier offers excellent performance for AI-generated text detection. Discriminant factor analysis, although providing an interpretable visualization of class separation, remains slightly behind in terms of raw performance.
 
-L’ensemble des résultats montre que l’approche basée sur les n-grammes et le classifieur Naive Bayes offre d’excellentes performances pour la détection de texte généré par IA. L’analyse factorielle discriminante, bien qu’apportant une visualisation interprétable de la séparation des classes, reste légèrement en retrait en termes de performance brute. 
+These observations confirm, in this context, that the richness of the textual representation plays a determining role in the quality of the classification.
 
-Ces observations confirment, dans ce contexte, que la richesse de la représentation textuelle joue un rôle déterminant dans la qualité de la classification. 
+# Future Work
 
-# Travaux futurs
+Several areas for improvement can be considered:
 
-Plusieurs pistes d’amélioration peuvent être envisagées :
-
- - **Enrichissement des caractéristiques linguistiques** : explorer des indicateurs stylométriques ou syntaxiques plus fins afin de mieux capter les différences subtiles entre textes humains et textes générés par l’IA.
- - **Expérimentation de modèles hybrides ou plus expressifs** : tester des architectures plus complexes pour évaluer si elles permettent un gain supplémentaire en performance par rapport au modèle bayésien.
- - **Adaptation aux modèles génératifs récents** : compte tenu de l’évolution rapide des LLM, ajuster l’approche à de nouvelles générations de modèles afin de garantir la robustesse du système dans le temps.
+ - **Enrichment of linguistic features**: explore finer stylometric or syntactic indicators to better capture subtle differences between human and AI-generated texts.
+ - **Experimentation with hybrid or more expressive models**: test more complex architectures to evaluate if they allow an additional gain in performance compared to the Bayesian model.
+ - **Adaptation to recent generative models**: given the rapid evolution of LLMs, adjust the approach to new generations of models to ensure the robustness of the system over time.
